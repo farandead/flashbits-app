@@ -36,7 +36,12 @@ import { debug, debugSuccess } from '@/utils/debug';
 WebBrowser.maybeCompleteAuthSession();
 
 // GitHub OAuth Config
-const GITHUB_CLIENT_ID = 'Ov23lilGvTP0FLJSbpkD';
+// Uses environment variable
+const GITHUB_CLIENT_ID = process.env.EXPO_PUBLIC_GITHUB_CLIENT_ID;
+
+if (!GITHUB_CLIENT_ID) {
+  console.warn('⚠️ EXPO_PUBLIC_GITHUB_CLIENT_ID not set. GitHub sign-in will not work.');
+}
 
 // Manual GitHub OAuth discovery (GitHub doesn't support auto-discovery)
 const githubDiscovery = {
@@ -46,7 +51,12 @@ const githubDiscovery = {
 };
 
 // Google OAuth Config
-const GOOGLE_CLIENT_ID = '258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com'; // You'll need to set this
+// Uses environment variable
+const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID;
+
+if (!GOOGLE_CLIENT_ID) {
+  console.warn('⚠️ EXPO_PUBLIC_GOOGLE_CLIENT_ID not set. Google sign-in will not work.');
+}
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -115,7 +125,7 @@ export default function LoginScreen() {
 
   // Get the redirect URI - log it to help with GitHub setup
   const redirectUri = AuthSession.makeRedirectUri({
-    scheme: 'flashprep',
+    scheme: 'flashbits',
     path: 'auth',
   });
 
@@ -215,8 +225,8 @@ export default function LoginScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       
       // Call your Firebase Cloud Function
-      // Replace with your actual Cloud Function URL after deployment
-      const CLOUD_FUNCTION_URL = 'https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode';
+      // Uses environment variable, falls back to default for development
+      const CLOUD_FUNCTION_URL = process.env.EXPO_PUBLIC_CLOUD_FUNCTION_URL;
       
       const response = await fetch(CLOUD_FUNCTION_URL, {
         method: 'POST',
@@ -410,12 +420,12 @@ export default function LoginScreen() {
 
       // Use Expo's auth proxy for a stable HTTPS redirect URI
       const redirectUri = AuthSession.makeRedirectUri({
-        native: 'flashprep://auth',
+        native: 'flashbits://auth',
         useProxy: true,
       } as any);
 
       console.log('🔗 Google OAuth Redirect URI:', redirectUri);
-      console.log('👆 This should be: https://auth.expo.io/@deadshotz/flashprep');
+      console.log('👆 This should be: https://auth.expo.io/@deadshotz/flashbits');
 
       const discovery = await AuthSession.fetchDiscoveryAsync(
         'https://accounts.google.com'

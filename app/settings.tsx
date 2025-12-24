@@ -222,17 +222,6 @@ export default function SettingsScreen() {
     }
   };
 
-  // Test notification
-  const handleTestNotification = async () => {
-    await notificationService.sendImmediateNotification(
-      NOTIFICATION_MESSAGES.test.title,
-      NOTIFICATION_MESSAGES.test.body
-    );
-    if (hapticFeedback) {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }
-    Alert.alert('✅ Test Sent', 'Check your notification tray!');
-  };
 
   // Handle contact support - redirect to web contact page
   const handleContactSupport = async () => {
@@ -333,40 +322,6 @@ export default function SettingsScreen() {
     setShowPaywall(false);
   };
 
-  // Seed questions to Firebase
-  const handleSeedQuestions = async () => {
-    Alert.alert(
-      'Seed Questions',
-      'This will upload all mock questions to Firebase. Continue?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Seed',
-          onPress: async () => {
-            setIsSeeding(true);
-            try {
-              await seedQuestionsToFirebase();
-              if (hapticFeedback) {
-                await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              }
-              Alert.alert('Success! ✅', 'Questions have been uploaded to Firebase.');
-              // Refresh count
-              const questions = await fetchAllQuestions();
-              setQuestionCount(questions.length);
-            } catch (error) {
-              console.error('Seed error:', error);
-              if (hapticFeedback) {
-                await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-              }
-              Alert.alert('Error', 'Failed to seed questions. Check console for details.');
-            } finally {
-              setIsSeeding(false);
-            }
-          },
-        },
-      ]
-    );
-  };
 
   // Check Firebase question count
   const handleCheckCount = async () => {
@@ -746,7 +701,13 @@ export default function SettingsScreen() {
             <View style={styles.accountInfo}>
               {isAuthenticated ? (
                 <>
-                  <Text style={styles.accountEmail}>{user?.displayName ? user?.displayName : user?.email}</Text>
+                  <Text 
+                    style={styles.accountEmail}
+                    numberOfLines={1}
+                    ellipsizeMode="middle"
+                  >
+                    {user?.displayName ? user?.displayName : user?.email}
+                  </Text>
                   <Text style={styles.accountStatus}>Signed in</Text>
                 </>
               ) : (
@@ -1433,16 +1394,6 @@ export default function SettingsScreen() {
               />
             </View>
 
-            {/* Test Notification Button */}
-            {notificationSettings.enabled && (
-              <Pressable
-                style={styles.testNotificationButton}
-                onPress={handleTestNotification}
-              >
-                <Ionicons name="send" size={18} color={colors.primary} />
-                <Text style={styles.testNotificationText}>Send Test Notification</Text>
-              </Pressable>
-            )}
           </View>
         </Animated.View>
 
@@ -1489,56 +1440,7 @@ export default function SettingsScreen() {
           </View>
         </Animated.View>
 
-        {/* Developer Section */}
-        <Animated.View
-          entering={FadeInDown.duration(400).delay(550)}
-          style={styles.section}
-        >
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="build-outline" size={18} color={colors.textPrimary} />
-            <Text style={styles.sectionTitle}>Developer Tools</Text>
-          </View>
-          <Text style={styles.sectionSubtitle}>
-            Firebase database management
-          </Text>
-
-          <View style={styles.devToolsContainer}>
-            {/* Question Count */}
-            <View style={styles.devStatCard}>
-              <Text style={styles.devStatLabel}>Questions in Firebase</Text>
-              <Text style={styles.devStatValue}>
-                {questionCount !== null ? questionCount : '—'}
-              </Text>
-              <Pressable style={styles.devRefreshButton} onPress={handleCheckCount}>
-                <View style={styles.devRefreshContent}>
-                  <Ionicons name="refresh" size={14} color={colors.secondary} />
-                  <Text style={styles.devRefreshText}>Refresh</Text>
-                </View>
-              </Pressable>
-            </View>
-
-            {/* Seed Button */}
-            <Pressable
-              style={[styles.devButton, isSeeding && styles.devButtonDisabled]}
-              onPress={handleSeedQuestions}
-              disabled={isSeeding}
-            >
-              {isSeeding ? (
-                <ActivityIndicator color={colors.textInverse} size="small" />
-              ) : (
-                <Ionicons name="leaf" size={28} color={colors.primary} />
-              )}
-              <View style={styles.devButtonContent}>
-                <Text style={styles.devButtonText}>
-                  {isSeeding ? 'Seeding...' : 'Seed Questions to Firebase'}
-                </Text>
-                <Text style={styles.devButtonSubtext}>
-                  Upload 15 mock questions to Firestore
-                </Text>
-              </View>
-            </Pressable>
-          </View>
-        </Animated.View>
+       
 
         {/* Start Button */}
         <Animated.View
@@ -1596,14 +1498,16 @@ const styles = StyleSheet.create({
   },
   accountInfo: {
     flex: 1,
+    minWidth: 0, // Allows flex children to shrink below their content size
   },
   accountEmail: {
-    fontSize: typography.fontSize.md,
+    fontSize: typography.fontSize.sm,
     fontWeight: '600',
     color: colors.textPrimary,
+    flexShrink: 1,
   },
   accountStatus: {
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.xs,
     color: colors.textMuted,
     marginTop: 2,
   },

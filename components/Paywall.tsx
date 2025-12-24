@@ -15,7 +15,7 @@ import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 interface PaywallProps {
   visible: boolean;
   onClose: () => void;
-  onSelectPlan: (plan: 'monthly') => void;
+  onSelectPlan: (plan: 'monthly' | 'yearly') => void;
 }
 
 type IoniconsName = keyof typeof Ionicons.glyphMap;
@@ -54,14 +54,21 @@ const FEATURES = [
 ];
 
 const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => {
+  const [selectedPlan, setSelectedPlan] = React.useState<'monthly' | 'yearly'>('monthly');
+
   const handleContinue = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    onSelectPlan('monthly');
+    onSelectPlan(selectedPlan);
   };
 
   const handleClose = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onClose();
+  };
+
+  const handleSelectPlan = async (plan: 'monthly' | 'yearly') => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedPlan(plan);
   };
 
   return (
@@ -94,15 +101,21 @@ const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => 
               <Ionicons name="star" size={12} color="#FFD700" />
             </View>
             <Text style={styles.subtitle}>
-              Limited time offer - Save 37%
+              Limited time offer - Save 30%
             </Text>
           </Animated.View>
 
-          {/* Pricing Plan - Monthly Only */}
+          {/* Pricing Plans */}
           <Animated.View entering={FadeInUp.duration(400).delay(200)} style={styles.pricingSection}>
-            <View style={styles.planCard}>
+            <Pressable 
+              onPress={() => handleSelectPlan('monthly')}
+              style={[
+                styles.planCard,
+                selectedPlan === 'monthly' && styles.planCardSelected
+              ]}
+            >
               <View style={styles.discountBadge}>
-                <Text style={styles.discountText}>SAVE 37%</Text>
+                <Text style={styles.discountText}>SAVE 30%</Text>
               </View>
 
               <View style={styles.planHeader}>
@@ -110,16 +123,55 @@ const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => 
                   <Text style={styles.planName}>Monthly Access</Text>
                   <Text style={styles.planDescription}>Full access to all features</Text>
                 </View>
+                {selectedPlan === 'monthly' && (
+                  <View style={styles.selectedIndicator}>
+                    <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                  </View>
+                )}
               </View>
 
               <View style={styles.priceContainer}>
                 <View style={styles.priceRow}>
-                  <Text style={styles.strikethroughPrice}>£15.99</Text>
-                  <Text style={styles.price}>£9.99</Text>
+                  <Text style={styles.strikethroughPrice}>£10</Text>
+                  <Text style={styles.price}>£6.99</Text>
                   <Text style={styles.period}>/mo</Text>
                 </View>
               </View>
-            </View>
+            </Pressable>
+          </Animated.View>
+
+          <Animated.View entering={FadeInUp.duration(400).delay(200)} style={styles.pricingSection}>
+            <Pressable 
+              onPress={() => handleSelectPlan('yearly')}
+              style={[
+                styles.planCard,
+                selectedPlan === 'yearly' && styles.planCardSelected
+              ]}
+            >
+              <View style={styles.discountBadge}>
+                <Text style={styles.discountText}>SAVE 38%</Text>
+              </View>
+
+              <View style={styles.planHeader}>
+                <View style={styles.planInfo}>
+                  <Text style={styles.planName}>Yearly Access</Text>
+                  <Text style={styles.planDescription}>Full access to all features</Text>
+                </View>
+                {selectedPlan === 'yearly' && (
+                  <View style={styles.selectedIndicator}>
+                    <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.priceContainer}>
+                <View style={styles.priceRow}>
+                  <Text style={styles.strikethroughPrice}>£120</Text>
+                  <Text style={styles.price}>£73.99</Text>
+                  <Text style={styles.period}>/yr</Text>
+                </View>
+              </View>
+            </Pressable>
           </Animated.View>
 
           {/* Features List */}
@@ -160,7 +212,9 @@ const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => 
         {/* Continue Button */}
         <View style={styles.footer}>
           <Pressable style={styles.continueButton} onPress={handleContinue}>
-            <Text style={styles.continueButtonText}>Start Pro</Text>
+            <Text style={styles.continueButtonText}>
+              Start {selectedPlan === 'monthly' ? 'Monthly' : 'Yearly'} Pro 
+            </Text>
             <Ionicons name="arrow-forward" size={16} color={colors.textInverse} />
           </Pressable>
           <Text style={styles.footerNote}>
@@ -250,6 +304,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primary,
     position: 'relative',
+    opacity: 0.6,
+  },
+  planCardSelected: {
+    opacity: 1,
+    borderWidth: 2,
+    backgroundColor: colors.primaryGlow,
   },
   discountBadge: {
     position: 'absolute',
@@ -268,8 +328,12 @@ const styles = StyleSheet.create({
   planHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: spacing.sm,
     marginTop: spacing.xs,
+  },
+  selectedIndicator: {
+    marginLeft: spacing.sm,
   },
   planInfo: {
     flex: 1,

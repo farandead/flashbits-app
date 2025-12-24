@@ -8,16 +8,70 @@ import { debug, debugSuccess, debugWarn } from '@/utils/debug';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { getReactNativePersistence } = require('firebase/auth');
 
-// Your web app's Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyCC8QQdswUwhn9Cc_9AZjTOI-rYisjYL3M",
-  authDomain: "flashprep-11c85.firebaseapp.com",
-  projectId: "flashprep-11c85",
-  storageBucket: "flashprep-11c85.firebasestorage.app",
-  messagingSenderId: "258968844420",
-  appId: "1:258968844420:web:3ce107a1de69ffa8d5aad1",
-  measurementId: "G-Q1XG9SFFTB"
+// Helper function to clean environment variable values
+// Removes quotes, whitespace, and ensures proper string format
+const cleanEnvVar = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  // Remove surrounding quotes (single or double) and trim whitespace
+  let cleaned = value.trim();
+  // Remove quotes from both ends if present
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || 
+      (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    cleaned = cleaned.slice(1, -1);
+  }
+  return cleaned || undefined;
 };
+
+// Your web app's Firebase configuration
+// Uses environment variables for deployment
+const firebaseConfig = {
+  apiKey: cleanEnvVar(process.env.EXPO_PUBLIC_FIREBASE_API_KEY),
+  authDomain: cleanEnvVar(process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN),
+  projectId: cleanEnvVar(process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID),
+  storageBucket: cleanEnvVar(process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET),
+  messagingSenderId: cleanEnvVar(process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID),
+  appId: cleanEnvVar(process.env.EXPO_PUBLIC_FIREBASE_APP_ID),
+  measurementId: cleanEnvVar(process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID)
+};
+
+// Debug: Log environment variable status with raw values
+const rawApiKey = process.env.EXPO_PUBLIC_FIREBASE_API_KEY;
+debug('firebase', 'Environment variables check:');
+debug('firebase', `  EXPO_PUBLIC_FIREBASE_API_KEY (raw): ${rawApiKey ? `"${rawApiKey.substring(0, 15)}..."` : '✗ Missing'}`);
+debug('firebase', `  EXPO_PUBLIC_FIREBASE_API_KEY (cleaned): ${firebaseConfig.apiKey ? `"${firebaseConfig.apiKey.substring(0, 15)}..."` : '✗ Missing'}`);
+debug('firebase', `  EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${firebaseConfig.authDomain ? '✓ Set' : '✗ Missing'}`);
+debug('firebase', `  EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${firebaseConfig.projectId ? '✓ Set' : '✗ Missing'}`);
+
+// Validate that all required environment variables are set
+const requiredEnvVars = [
+  { key: 'EXPO_PUBLIC_FIREBASE_API_KEY', value: firebaseConfig.apiKey },
+  { key: 'EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN', value: firebaseConfig.authDomain },
+  { key: 'EXPO_PUBLIC_FIREBASE_PROJECT_ID', value: firebaseConfig.projectId },
+  { key: 'EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET', value: firebaseConfig.storageBucket },
+  { key: 'EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID', value: firebaseConfig.messagingSenderId },
+  { key: 'EXPO_PUBLIC_FIREBASE_APP_ID', value: firebaseConfig.appId },
+];
+
+const missingVars = requiredEnvVars.filter(({ value }) => !value || (typeof value === 'string' && value.trim() === ''));
+
+if (missingVars.length > 0) {
+  const missingKeys = missingVars.map(({ key }) => key);
+  const errorMessage = `\n❌ Missing required Firebase environment variables: ${missingKeys.join(', ')}\n ${missingKeys.join(', ')}\n Environment variables only load when Expo starts!\n\n`;
+    `Environment variables only load when Expo starts!\n\n` +
+    `Current status:\n` +
+    requiredEnvVars.map(({ key, value }) => {
+      const status = value && (typeof value !== 'string' || value.trim() !== '') ? '✓ Set' : '✗ Missing';
+      const preview = value && typeof value === 'string' ? ` (${value.substring(0, 20)}...)` : '';
+      return `  ${key}: ${status}${preview}`;
+    }).join('\n')  
+  console.error('❌ Firebase Configuration Error:');
+  console.error(errorMessage);
+  throw new Error(`Firebase configuration incomplete. Missing: ${missingKeys.join(', ')}\n Environment variables only load when Expo starts!\n\n`);
+}
+
+// Log successful configuration with key info
+debugSuccess('firebase', 'Firebase config loaded successfully');
+debug('firebase', `Using API key: ${firebaseConfig.apiKey?.substring(0,5)}... (length: ${firebaseConfig.apiKey?.length})`);
 
 // Initialize Firebase (prevent re-initialization)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
