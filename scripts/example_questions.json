@@ -1,0 +1,25 @@
+[
+  {
+    "id": "custom-1",
+    "topic": "Arrays",
+    "difficulty": "easy",
+    "type": "mcq",
+    "question": "What is the time complexity of iterating through an array of n elements?",
+    "options": ["O(1)", "O(n)", "O(log n)", "O(n²)"],
+    "correctAnswer": 1,
+    "explanation": "Iterating through all n elements requires visiting each element once, resulting in O(n) time complexity.",
+    "timeLimit": 30
+  },
+  {
+    "id": "custom-2",
+    "topic": "Hashing",
+    "difficulty": "medium",
+    "type": "mcq",
+    "question": "What is the average space complexity of a hash table with n elements?",
+    "options": ["O(1)", "O(n)", "O(log n)", "O(n²)"],
+    "correctAnswer": 1,
+    "explanation": "A hash table stores n key-value pairs, requiring O(n) space complexity.",
+    "timeLimit": 30
+  }
+]
+

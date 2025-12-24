@@ -1,0 +1,9 @@
+# Python bytecode
+__pycache__/
+
+# Python virtual environment
+venv/
+*.local
+
+# Service account keys (keep local, deploy with functions)
+*-firebase-adminsdk-*.json
