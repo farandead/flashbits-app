@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { 
   onAuthStateChanged, 
   signOut as firebaseSignOut,
+  deleteUser as firebaseDeleteUser,
   User,
   signInWithCredential,
   createUserWithEmailAndPassword,
@@ -16,6 +17,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Import the pre-configured auth instance with persistence
 import { auth } from '@/config/firebase';
 import { debug, debugSuccess, debugError } from '@/utils/debug';
+import { deleteUserData } from '@/services/userService';
+import { logOutRevenueCat } from '@/services/revenueCatService';
 
 interface AuthContextType {
   user: User | null;
@@ -24,6 +27,7 @@ interface AuthContextType {
   
   // Auth methods
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<{ success: boolean; error?: string }>;
   
   // Email auth
   signUpWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
@@ -92,6 +96,55 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (error) {
       console.error('Sign out error:', error);
       throw error;
+    }
+  };
+
+  // Delete account
+  const deleteAccount = async (): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        return { success: false, error: 'No user is currently signed in.' };
+      }
+
+      const userId = currentUser.uid;
+      debug('auth', 'Starting account deletion for user:', userId);
+
+      // Step 1: Delete user data from Firestore
+      try {
+        await deleteUserData(userId);
+        debugSuccess('auth', 'User data deleted from Firestore');
+      } catch (error: any) {
+        debugError('auth', 'Error deleting user data:', error);
+        // Continue with account deletion even if Firestore deletion fails
+        // (user can contact support to clean up orphaned data)
+      }
+
+      // Step 2: Log out from RevenueCat
+      try {
+        await logOutRevenueCat();
+        debugSuccess('auth', 'Logged out from RevenueCat');
+      } catch (error: any) {
+        debugError('auth', 'Error logging out from RevenueCat:', error);
+        // Continue with account deletion even if RevenueCat logout fails
+      }
+
+      // Step 3: Delete Firebase Auth account
+      await firebaseDeleteUser(currentUser);
+      debugSuccess('auth', 'Firebase Auth account deleted');
+
+      return { success: true };
+    } catch (error: any) {
+      debugError('auth', 'Error deleting account:', error);
+      let errorMessage = 'Failed to delete account. Please try again.';
+      
+      if (error.code === 'auth/requires-recent-login') {
+        errorMessage = 'For security, please sign out and sign back in before deleting your account.';
+      } else if (error.code === 'auth/network-request-failed') {
+        errorMessage = 'Network error. Please check your connection and try again.';
+      }
+      
+      return { success: false, error: errorMessage };
     }
   };
 
@@ -205,6 +258,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isLoading,
         isAuthenticated: !!user,
         signOut,
+        deleteAccount,
         signUpWithEmail,
         signInWithEmail,
         sendPhoneVerification,

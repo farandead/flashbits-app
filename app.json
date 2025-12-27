@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.flashbits.app",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "usesAppleSignIn": true,
       "infoPlist": {
         "UIBackgroundModes": [
@@ -23,7 +24,8 @@
           "remote-notification"
         ],
         "ITSAppUsesNonExemptEncryption": false
-      }
+      },
+      "appleTeamId": "P4U95U8X93"
     },
     "android": {
       "adaptiveIcon": {
@@ -31,6 +33,7 @@
         "backgroundColor": "#0D0D0D"
       },
       "package": "com.flashbits.app",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
@@ -52,17 +55,19 @@
       "expo-router",
       "expo-web-browser",
       "expo-apple-authentication",
+      "@react-native-google-signin/google-signin",
       [
         "expo-notifications",
         {
-          "icon": "./assets/notification-icon.png",
+          "icon": "./assets/icons/notification-icon.png",
           "color": "#00FF94",
           "sounds": [
             "./assets/sounds/correct.mp3",
             "./assets/sounds/incorrect.mp3"
           ]
         }
-      ]
+      ],
+      "react-native-iap"
     ],
     "experiments": {
       "typedRoutes": true

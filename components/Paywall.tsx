@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,16 +6,24 @@ import {
   Pressable,
   ScrollView,
   Modal,
+  ActivityIndicator,
+  Alert,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
+import { useRevenueCat } from '@/context/RevenueCatContext';
+import { PurchasesPackage } from 'react-native-purchases';
+import PurchasesUI from 'react-native-purchases-ui';
+import type { PurchasesPackage as PurchasesPackageType } from 'react-native-purchases';
 
 interface PaywallProps {
   visible: boolean;
   onClose: () => void;
-  onSelectPlan: (plan: 'monthly' | 'yearly') => void;
+  onSelectPlan?: (plan: 'monthly' | 'yearly') => void; // Optional now since we handle it internally
+  useRevenueCatPaywall?: boolean; // Option to use RevenueCat's built-in paywall
 }
 
 type IoniconsName = keyof typeof Ionicons.glyphMap;
@@ -53,12 +61,119 @@ const FEATURES = [
   },
 ];
 
-const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => {
-  const [selectedPlan, setSelectedPlan] = React.useState<'monthly' | 'yearly'>('monthly');
+const Paywall: React.FC<PaywallProps> = ({ 
+  visible, 
+  onClose, 
+  onSelectPlan,
+  useRevenueCatPaywall = false 
+}) => {
+  const { 
+    currentOffering, 
+    purchasePlan, 
+    isLoading,
+    refreshOfferings,
+    refreshCustomerInfo,
+    isPro
+  } = useRevenueCat();
+  
+  const [selectedPlan, setSelectedPlan] = useState<'monthly' | 'yearly'>('monthly');
+  const [packages, setPackages] = useState<PurchasesPackageType[]>([]);
+  const [isPurchasing, setIsPurchasing] = useState(false);
+
+  // Load packages when modal opens
+  useEffect(() => {
+    if (visible && currentOffering) {
+      setPackages(currentOffering.availablePackages);
+      
+      // Auto-select yearly if available (better value)
+      const yearlyPackage = currentOffering.availablePackages.find(
+        pkg => pkg.identifier.toLowerCase().includes('yearly') || 
+               pkg.identifier.toLowerCase().includes('annual')
+      );
+      if (yearlyPackage) {
+        setSelectedPlan('yearly');
+      }
+    }
+  }, [visible, currentOffering]);
+
+  // Present RevenueCat's built-in paywall
+  const presentRevenueCatPaywall = async () => {
+    try {
+      if (!currentOffering) {
+        Alert.alert('Error', 'No offerings available. Please try again later.');
+        return;
+      }
+
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      
+      // Present RevenueCat's paywall UI
+      // Note: presentPaywall can take an offering or use the default
+      const result = await PurchasesUI.presentPaywall({
+        offering: currentOffering,
+      });
+      
+      if (result) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        
+        // Wait a moment for RevenueCat to process
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        // Immediately refresh customer info to update pro status
+        // This ensures UI updates right away and syncs to Firestore
+        await refreshCustomerInfo();
+        
+        // Close paywall after successful purchase
+        onClose();
+      }
+    } catch (error: any) {
+      console.error('RevenueCat paywall error:', error);
+      if (!error.userCancelled) {
+        Alert.alert('Error', error.message || 'Failed to present paywall');
+      }
+    }
+  };
 
   const handleContinue = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    onSelectPlan(selectedPlan);
+    if (useRevenueCatPaywall) {
+      await presentRevenueCatPaywall();
+      return;
+    }
+
+    try {
+      setIsPurchasing(true);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      
+      const result = await purchasePlan(selectedPlan);
+      
+      if (result.success) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        
+        // Pro status is already updated in purchasePlan, but refresh to be sure
+        // Wait a tiny bit to ensure state has propagated
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await refreshCustomerInfo();
+        
+        // Close paywall - pro status should be updated
+        onClose();
+        
+        // Show success message after closing (non-blocking)
+        setTimeout(() => {
+          Alert.alert(
+            'Success!',
+            'Your subscription is now active. Enjoy Pro features!',
+            [{ text: 'OK' }]
+          );
+        }, 300);
+      } else {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        Alert.alert('Purchase Failed', result.error || 'Please try again.');
+      }
+    } catch (error: any) {
+      console.error('Purchase error:', error);
+      Alert.alert('Error', error.message || 'Purchase failed. Please try again.');
+    } finally {
+      setIsPurchasing(false);
+    }
   };
 
   const handleClose = async () => {
@@ -69,6 +184,26 @@ const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => 
   const handleSelectPlan = async (plan: 'monthly' | 'yearly') => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedPlan(plan);
+  };
+
+  // Get package for selected plan
+  const getSelectedPackage = (): PurchasesPackageType | null => {
+    return packages.find((pkg) => {
+      const identifier = pkg.identifier.toLowerCase();
+      return identifier.includes(selectedPlan.toLowerCase());
+    }) || null;
+  };
+
+  // Format price from package
+  const formatPrice = (pkg: PurchasesPackageType | null): string => {
+    if (!pkg || !pkg.product) return 'Loading...';
+    return pkg.product.priceString;
+  };
+
+  // Get package description
+  const getPackageDescription = (pkg: PurchasesPackageType | null): string => {
+    if (!pkg) return 'Full access to all features';
+    return pkg.product.description || 'Full access to all features';
   };
 
   return (
@@ -106,73 +241,76 @@ const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => 
           </Animated.View>
 
           {/* Pricing Plans */}
-          <Animated.View entering={FadeInUp.duration(400).delay(200)} style={styles.pricingSection}>
-            <Pressable 
-              onPress={() => handleSelectPlan('monthly')}
-              style={[
-                styles.planCard,
-                selectedPlan === 'monthly' && styles.planCardSelected
-              ]}
-            >
-              <View style={styles.discountBadge}>
-                <Text style={styles.discountText}>SAVE 30%</Text>
-              </View>
+          {packages.length > 0 ? (
+            <>
+              {packages.map((pkg: PurchasesPackageType, index: number) => {
+                const isMonthly = pkg.identifier.toLowerCase().includes('monthly') || 
+                                 pkg.identifier.toLowerCase().includes('month');
+                const isYearly = pkg.identifier.toLowerCase().includes('yearly') || 
+                                pkg.identifier.toLowerCase().includes('annual') ||
+                                pkg.identifier.toLowerCase().includes('year');
+                
+                // Only show monthly and yearly packages
+                if (!isMonthly && !isYearly) return null;
+                
+                const planType = isMonthly ? 'monthly' : 'yearly';
+                const isSelected = selectedPlan === planType;
+                
+                return (
+                  <Animated.View 
+                    key={pkg.identifier} 
+                    entering={FadeInUp.duration(400).delay(200 + (index * 100))} 
+                    style={styles.pricingSection}
+                  >
+                    <Pressable 
+                      onPress={() => handleSelectPlan(planType)}
+                      style={[
+                        styles.planCard,
+                        isSelected && styles.planCardSelected
+                      ]}
+                      disabled={isPurchasing}
+                    >
+                      {isYearly && (
+                        <View style={styles.discountBadge}>
+                          <Text style={styles.discountText}>BEST VALUE</Text>
+                        </View>
+                      )}
 
-              <View style={styles.planHeader}>
-                <View style={styles.planInfo}>
-                  <Text style={styles.planName}>Monthly Access</Text>
-                  <Text style={styles.planDescription}>Full access to all features</Text>
-                </View>
-                {selectedPlan === 'monthly' && (
-                  <View style={styles.selectedIndicator}>
-                    <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                  </View>
-                )}
-              </View>
+                      <View style={styles.planHeader}>
+                        <View style={styles.planInfo}>
+                          <Text style={styles.planName}>
+                            {isMonthly ? 'Monthly Access' : 'Yearly Access'}
+                          </Text>
+                          <Text style={styles.planDescription}>
+                            {getPackageDescription(pkg)}
+                          </Text>
+                        </View>
+                        {isSelected && (
+                          <View style={styles.selectedIndicator}>
+                            <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                          </View>
+                        )}
+                      </View>
 
-              <View style={styles.priceContainer}>
-                <View style={styles.priceRow}>
-                  <Text style={styles.strikethroughPrice}>£10</Text>
-                  <Text style={styles.price}>£6.99</Text>
-                  <Text style={styles.period}>/mo</Text>
-                </View>
-              </View>
-            </Pressable>
-          </Animated.View>
-
-          <Animated.View entering={FadeInUp.duration(400).delay(200)} style={styles.pricingSection}>
-            <Pressable 
-              onPress={() => handleSelectPlan('yearly')}
-              style={[
-                styles.planCard,
-                selectedPlan === 'yearly' && styles.planCardSelected
-              ]}
-            >
-              <View style={styles.discountBadge}>
-                <Text style={styles.discountText}>SAVE 38%</Text>
-              </View>
-
-              <View style={styles.planHeader}>
-                <View style={styles.planInfo}>
-                  <Text style={styles.planName}>Yearly Access</Text>
-                  <Text style={styles.planDescription}>Full access to all features</Text>
-                </View>
-                {selectedPlan === 'yearly' && (
-                  <View style={styles.selectedIndicator}>
-                    <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.priceContainer}>
-                <View style={styles.priceRow}>
-                  <Text style={styles.strikethroughPrice}>£120</Text>
-                  <Text style={styles.price}>£73.99</Text>
-                  <Text style={styles.period}>/yr</Text>
-                </View>
-              </View>
-            </Pressable>
-          </Animated.View>
+                      <View style={styles.priceContainer}>
+                        <View style={styles.priceRow}>
+                          <Text style={styles.price}>{formatPrice(pkg)}</Text>
+                          <Text style={styles.period}>
+                            {isMonthly ? '/mo' : '/yr'}
+                          </Text>
+                        </View>
+                      </View>
+                    </Pressable>
+                  </Animated.View>
+                );
+              })}
+            </>
+          ) : (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={styles.loadingText}>Loading plans...</Text>
+            </View>
+          )}
 
           {/* Features List */}
           <Animated.View entering={FadeInUp.duration(400).delay(400)} style={styles.featuresSection}>
@@ -211,14 +349,30 @@ const Paywall: React.FC<PaywallProps> = ({ visible, onClose, onSelectPlan }) => 
 
         {/* Continue Button */}
         <View style={styles.footer}>
-          <Pressable style={styles.continueButton} onPress={handleContinue}>
-            <Text style={styles.continueButtonText}>
-              Start {selectedPlan === 'monthly' ? 'Monthly' : 'Yearly'} Pro 
-            </Text>
-            <Ionicons name="arrow-forward" size={16} color={colors.textInverse} />
+          <Pressable 
+            style={[styles.continueButton, (isPurchasing || isLoading) && styles.continueButtonDisabled]} 
+            onPress={handleContinue}
+            disabled={isPurchasing || isLoading || packages.length === 0}
+          >
+            {isPurchasing ? (
+              <>
+                <ActivityIndicator size="small" color={colors.textInverse} />
+                <Text style={styles.continueButtonText}>Processing...</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.continueButtonText}>
+                  {useRevenueCatPaywall 
+                    ? 'View Plans' 
+                    : `Start ${selectedPlan === 'monthly' ? 'Monthly' : 'Yearly'} Pro`
+                  }
+                </Text>
+                <Ionicons name="arrow-forward" size={16} color={colors.textInverse} />
+              </>
+            )}
           </Pressable>
           <Text style={styles.footerNote}>
-            Early bird pricing • Cancel anytime
+            Cancel anytime • Subscription auto-renews
           </Text>
         </View>
       </View>
@@ -467,6 +621,19 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: colors.textMuted,
     textAlign: 'center',
+  },
+  continueButtonDisabled: {
+    opacity: 0.6,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xl,
+  },
+  loadingText: {
+    marginTop: spacing.sm,
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
   },
 });
 

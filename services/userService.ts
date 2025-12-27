@@ -3,6 +3,11 @@ import {
   setDoc, 
   getDoc, 
   updateDoc,
+  deleteDoc,
+  collection,
+  query,
+  where,
+  getDocs,
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
@@ -89,6 +94,46 @@ export const updateUserProfile = async (
     console.log('User profile updated successfully');
   } catch (error) {
     console.error('Error updating user profile:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete all user data from Firestore
+ * This includes: user profile, user stats, and user activities
+ */
+export const deleteUserData = async (userId: string): Promise<void> => {
+  try {
+    console.log(`Deleting all data for user: ${userId}`);
+    
+    // Delete user profile
+    const userRef = doc(db, 'users', userId);
+    await deleteDoc(userRef);
+    console.log('User profile deleted');
+    
+    // Delete user stats
+    const userStatsRef = doc(db, 'userStats', userId);
+    const userStatsSnap = await getDoc(userStatsRef);
+    if (userStatsSnap.exists()) {
+      await deleteDoc(userStatsRef);
+      console.log('User stats deleted');
+    }
+    
+    // Delete user activities (activities created by this user)
+    const activitiesRef = collection(db, 'activities');
+    const activitiesQuery = query(activitiesRef, where('userId', '==', userId));
+    const activitiesSnap = await getDocs(activitiesQuery);
+    
+    const deletePromises = activitiesSnap.docs.map(async (activityDoc) => {
+      await deleteDoc(activityDoc.ref);
+    });
+    
+    await Promise.all(deletePromises);
+    console.log(`Deleted ${activitiesSnap.docs.length} user activities`);
+    
+    console.log('All user data deleted successfully');
+  } catch (error) {
+    console.error('Error deleting user data:', error);
     throw error;
   }
 };

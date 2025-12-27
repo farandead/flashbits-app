@@ -6,7 +6,7 @@
  */
 
 // Master switch - set to false to disable all debug logging
-const DEBUG_ENABLED = false;
+const DEBUG_ENABLED = true;
 
 // Category toggles - enable/disable specific debug areas
 const DEBUG_CATEGORIES = {
