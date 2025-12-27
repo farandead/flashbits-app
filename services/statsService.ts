@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { topicColors as TOPIC_COLORS } from '@/data/questions';
+import { debug, debugError, debugSuccess } from '@/utils/debug';
 
 // Topic stats interface
 export interface TopicStats {
@@ -69,7 +70,7 @@ export const getUserStats = async (userId: string): Promise<UserStats> => {
     // Return default stats if none exist
     return { ...DEFAULT_STATS };
   } catch (error) {
-    console.error('Error getting user stats:', error);
+    debugError('stats', 'Error getting user stats:', error);
     return { ...DEFAULT_STATS };
   }
 };
@@ -88,10 +89,10 @@ export const initializeUserStats = async (userId: string): Promise<void> => {
         createdAt: new Date().toISOString(),
         lastActiveAt: new Date().toISOString(),
       });
-      console.log('User stats initialized');
+      debugSuccess('stats', 'User stats initialized');
     }
   } catch (error) {
-    console.error('Error initializing user stats:', error);
+    debugError('stats', 'Error initializing user stats:', error);
   }
 };
 
@@ -170,9 +171,9 @@ export const recordCorrectAnswer = async (
       
       await updateDoc(statsRef, updateData);
     }
-    console.log('Correct answer recorded for question:', questionId);
+    debugSuccess('stats', 'Correct answer recorded for question:', questionId);
   } catch (error) {
-    console.error('Error recording correct answer:', error);
+    debugError('stats', 'Error recording correct answer:', error);
   }
 };
 
@@ -244,9 +245,9 @@ export const recordWrongAnswer = async (
       
       await updateDoc(statsRef, updateData);
     }
-    console.log('Wrong answer recorded for question:', questionId);
+    debugSuccess('stats', 'Wrong answer recorded for question:', questionId);
   } catch (error) {
-    console.error('Error recording wrong answer:', error);
+    debugError('stats', 'Error recording wrong answer:', error);
   }
 };
 
@@ -282,9 +283,9 @@ export const recordSkippedQuestion = async (
         lastActiveAt: new Date().toISOString(),
       });
     }
-    console.log('Skipped question recorded for question:', questionId);
+    debugSuccess('stats', 'Skipped question recorded for question:', questionId);
   } catch (error) {
-    console.error('Error recording skipped question:', error);
+    debugError('stats', 'Error recording skipped question:', error);
   }
 };
 
@@ -299,7 +300,7 @@ export const hasAnsweredQuestion = async (
     const stats = await getUserStats(userId);
     return stats.answeredQuestionIds?.includes(questionId) || false;
   } catch (error) {
-    console.error('Error checking if question answered:', error);
+    debugError('stats', 'Error checking if question answered:', error);
     return false;
   }
 };
@@ -315,7 +316,7 @@ export const hasAnsweredCorrectly = async (
     const stats = await getUserStats(userId);
     return stats.correctQuestionIds?.includes(questionId) || false;
   } catch (error) {
-    console.error('Error checking if question answered correctly:', error);
+    debugError('stats', 'Error checking if question answered correctly:', error);
     return false;
   }
 };
@@ -328,7 +329,7 @@ export const getAnsweredQuestionIds = async (userId: string): Promise<string[]> 
     const stats = await getUserStats(userId);
     return stats.answeredQuestionIds || [];
   } catch (error) {
-    console.error('Error getting answered question IDs:', error);
+    debugError('stats', 'Error getting answered question IDs:', error);
     return [];
   }
 };
@@ -344,7 +345,7 @@ export const hasAnsweredWrongly = async (
     const stats = await getUserStats(userId);
     return stats.wrongQuestionIds?.includes(questionId) || false;
   } catch (error) {
-    console.error('Error checking if question answered wrongly:', error);
+    debugError('stats', 'Error checking if question answered wrongly:', error);
     return false;
   }
 };
@@ -360,7 +361,7 @@ export const hasSkippedQuestion = async (
     const stats = await getUserStats(userId);
     return stats.skippedQuestionIds?.includes(questionId) || false;
   } catch (error) {
-    console.error('Error checking if question was skipped:', error);
+    debugError('stats', 'Error checking if question was skipped:', error);
     return false;
   }
 };

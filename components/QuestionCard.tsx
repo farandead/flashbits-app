@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -71,13 +71,29 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
   const [showExplanation, setShowExplanation] = useState(false);
+  const explanationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reset state when question changes
   useEffect(() => {
+    // Clear any pending timeout when question changes
+    if (explanationTimeoutRef.current) {
+      clearTimeout(explanationTimeoutRef.current);
+      explanationTimeoutRef.current = null;
+    }
+    
     setSelectedAnswer(null);
     setHasAnswered(false);
     setShowExplanation(false);
   }, [question.id]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (explanationTimeoutRef.current) {
+        clearTimeout(explanationTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleOptionPress = async (index: number) => {
     if (hasAnswered) return;
@@ -105,8 +121,14 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
     }
 
     // Show explanation after brief delay
-    setTimeout(() => {
+    // Clear any existing timeout first
+    if (explanationTimeoutRef.current) {
+      clearTimeout(explanationTimeoutRef.current);
+    }
+    
+    explanationTimeoutRef.current = setTimeout(() => {
       setShowExplanation(true);
+      explanationTimeoutRef.current = null;
     }, 300);
 
     // Report answer to parent (with topic and difficulty for stats tracking)

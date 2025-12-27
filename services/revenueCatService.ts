@@ -11,25 +11,13 @@ export type { CustomerInfo, PurchasesOffering, PurchasesPackage, PurchasesStoreP
 import { Platform, Alert } from 'react-native';
 import { auth, db } from '@/config/firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
-// Use console for RevenueCat logging (debug utility doesn't support 'revenuecat' type)
-const log = (message: string, ...args: any[]) => {
-  if (__DEV__) {
-    console.log(`[RevenueCat] ${message}`, ...args);
-  }
-};
+import { debug, debugError, debugSuccess } from '@/utils/debug';
 
-const logSuccess = (message: string, ...args: any[]) => {
-  if (__DEV__) {
-    console.log(`✅ [RevenueCat] ${message}`, ...args);
-  }
-};
-
-const logError = (message: string, ...args: any[]) => {
-  console.error(`❌ [RevenueCat] ${message}`, ...args);
-};
-
-// RevenueCat API Key
-const REVENUECAT_API_KEY = 'appl_hMEAXDEWgsafXafxJrgvrZLFrnE';
+// RevenueCat API Key - loaded from environment variables
+const REVENUECAT_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY;
+if (!REVENUECAT_API_KEY) {
+  throw new Error('EXPO_PUBLIC_REVENUECAT_API_KEY is not set. Please add it to your .env file.');
+}
 
 // Entitlement identifier
 export const ENTITLEMENT_ID = 'pro';
@@ -59,13 +47,15 @@ interface PurchaseResult {
  */
 export const initializeRevenueCat = async (): Promise<boolean> => {
   try {
-    log('Initializing RevenueCat SDK...');
+    debug('revenueCat', 'Initializing RevenueCat SDK...');
     
     // Set log level for debugging
-    // Note: DEBUG level may show cache errors in iOS simulator (non-critical)
+    // Note: Cache errors (ERROR level) are non-critical and common in development/simulator
+    // They occur when RevenueCat tries to cache data but directories don't exist yet
     // These errors don't affect functionality - RevenueCat will work fine
+    // Setting to ERROR level reduces noise from WARN messages (like missing App Store Connect metadata)
     if (__DEV__) {
-      Purchases.setLogLevel(LOG_LEVEL.WARN); // Use WARN to reduce noise, or DEBUG for full logs
+      Purchases.setLogLevel(LOG_LEVEL.ERROR); // Only show errors in dev (cache errors are harmless)
     } else {
       Purchases.setLogLevel(LOG_LEVEL.ERROR); // Only errors in production
     }
@@ -77,14 +67,14 @@ export const initializeRevenueCat = async (): Promise<boolean> => {
 
     // Set up customer info update listener to automatically refresh when purchases change
     Purchases.addCustomerInfoUpdateListener((customerInfo) => {
-      log('Customer info updated - syncing to Firestore');
+      debug('revenueCat', 'Customer info updated - syncing to Firestore');
       // Automatically sync to Firestore when customer info updates
       syncSubscriptionToFirestore().catch((error) => {
-        logError('Failed to sync after customer info update:', error);
+        debugError('revenueCat', 'Failed to sync after customer info update:', error);
       });
     });
 
-    logSuccess('RevenueCat SDK initialized successfully');
+    debugSuccess('revenueCat', 'RevenueCat SDK initialized successfully');
 
     // Set user ID if user is authenticated
     const user = auth.currentUser;
@@ -94,7 +84,7 @@ export const initializeRevenueCat = async (): Promise<boolean> => {
 
     return true;
   } catch (error: any) {
-    logError('Failed to initialize RevenueCat:', error);
+    debugError('revenueCat', 'Failed to initialize RevenueCat:', error);
     return false;
   }
 };
@@ -105,11 +95,11 @@ export const initializeRevenueCat = async (): Promise<boolean> => {
  */
 export const setRevenueCatUserId = async (userId: string): Promise<void> => {
   try {
-    log(`Setting RevenueCat user ID: ${userId}`);
+    debug('revenueCat', `Setting RevenueCat user ID: ${userId}`);
     await Purchases.logIn(userId);
-    logSuccess('RevenueCat user ID set successfully');
+    debugSuccess('revenueCat', 'RevenueCat user ID set successfully');
   } catch (error: any) {
-    logError('Failed to set RevenueCat user ID:', error);
+    debugError('revenueCat', 'Failed to set RevenueCat user ID:', error);
     throw error;
   }
 };
@@ -120,11 +110,11 @@ export const setRevenueCatUserId = async (userId: string): Promise<void> => {
  */
 export const logOutRevenueCat = async (): Promise<void> => {
   try {
-    log('Logging out RevenueCat user');
+    debug('revenueCat', 'Logging out RevenueCat user');
     await Purchases.logOut();
-    logSuccess('RevenueCat user logged out');
+    debugSuccess('revenueCat', 'RevenueCat user logged out');
   } catch (error: any) {
-    logError('Failed to log out RevenueCat user:', error);
+    debugError('revenueCat', 'Failed to log out RevenueCat user:', error);
     throw error;
   }
 };
@@ -137,7 +127,7 @@ export const getCustomerInfo = async (): Promise<CustomerInfo | null> => {
     const customerInfo = await Purchases.getCustomerInfo();
     return customerInfo;
   } catch (error: any) {
-    logError('Failed to get customer info:', error);
+    debugError('revenueCat', 'Failed to get customer info:', error);
     return null;
   }
 };
@@ -151,10 +141,10 @@ export const hasActiveEntitlement = async (): Promise<boolean> => {
     if (!customerInfo) return false;
     
     const isEntitled = customerInfo.entitlements.active[ENTITLEMENT_ID] !== undefined;
-    log(`Has active entitlement: ${isEntitled}`);
+    debug('revenueCat', `Has active entitlement: ${isEntitled}`);
     return isEntitled;
   } catch (error: any) {
-    logError('Failed to check entitlement:', error);
+    debugError('revenueCat', 'Failed to check entitlement:', error);
     return false;
   }
 };
@@ -167,14 +157,14 @@ export const getOfferings = async (): Promise<PurchasesOffering | null> => {
     const offerings = await Purchases.getOfferings();
     
     if (offerings.current !== null) {
-      logSuccess('Found current offering');
+      debugSuccess('revenueCat', 'Found current offering');
       return offerings.current;
     }
     
-      log('No current offering found');
+      debug('revenueCat', 'No current offering found');
     return null;
   } catch (error: any) {
-    logError('Failed to get offerings:', error);
+    debugError('revenueCat', 'Failed to get offerings:', error);
     return null;
   }
 };
@@ -186,15 +176,15 @@ export const getPackages = async (): Promise<PurchasesPackage[]> => {
   try {
     const offering = await getOfferings();
     if (!offering) {
-      log('No offering found, returning empty packages array');
+      debug('revenueCat', 'No offering found, returning empty packages array');
       return [];
     }
     
     const packages = offering.availablePackages;
-    log(`Found ${packages.length} packages: ${packages.map(p => p.identifier).join(', ')}`);
+    debug('revenueCat', `Found ${packages.length} packages: ${packages.map(p => p.identifier).join(', ')}`);
     return packages;
   } catch (error: any) {
-    logError('Failed to get packages:', error);
+    debugError('revenueCat', 'Failed to get packages:', error);
     return [];
   }
 };
@@ -206,15 +196,15 @@ export const purchasePackage = async (
   packageToPurchase: PurchasesPackage
 ): Promise<PurchaseResult> => {
   try {
-    log(`Purchasing package: ${packageToPurchase.identifier}`);
-    log(`Product ID: ${packageToPurchase.product.identifier}`);
-    log(`Price: ${packageToPurchase.product.priceString}`);
-    log(`Title: ${packageToPurchase.product.title}`);
-    log(`Description: ${packageToPurchase.product.description || 'N/A'}`);
+    debug('revenueCat', `Purchasing package: ${packageToPurchase.identifier}`);
+    debug('revenueCat', `Product ID: ${packageToPurchase.product.identifier}`);
+    debug('revenueCat', `Price: ${packageToPurchase.product.priceString}`);
+    debug('revenueCat', `Title: ${packageToPurchase.product.title}`);
+    debug('revenueCat', `Description: ${packageToPurchase.product.description || 'N/A'}`);
     
     const { customerInfo } = await Purchases.purchasePackage(packageToPurchase);
     
-    logSuccess('Purchase successful');
+    debugSuccess('revenueCat', 'Purchase successful');
     
     // Sync subscription status to Firestore after successful purchase
     await syncSubscriptionToFirestore();
@@ -224,7 +214,7 @@ export const purchasePackage = async (
       customerInfo,
     };
   } catch (error: any) {
-    logError('Purchase failed:', error);
+    debugError('revenueCat', 'Purchase failed:', error);
     
     // Handle user cancellation
     if (error.userCancelled) {
@@ -282,7 +272,7 @@ export const purchaseSubscription = async (
     if (!packageToPurchase) {
       // Log available packages for debugging
       const availableIdentifiers = packages.map(p => p.identifier).join(', ');
-      logError(`Package for ${plan} plan not found. Available packages: ${availableIdentifiers}`);
+      debugError('revenueCat', `Package for ${plan} plan not found. Available packages: ${availableIdentifiers}`);
       
       return {
         success: false,
@@ -290,10 +280,10 @@ export const purchaseSubscription = async (
       };
     }
     
-    log(`Found matching package for ${plan}: ${packageToPurchase.identifier}`);
+    debug('revenueCat', `Found matching package for ${plan}: ${packageToPurchase.identifier}`);
     return await purchasePackage(packageToPurchase);
   } catch (error: any) {
-    logError('Failed to purchase subscription:', error);
+    debugError('revenueCat', 'Failed to purchase subscription:', error);
     return {
       success: false,
       error: error.message || 'Failed to purchase subscription',
@@ -306,11 +296,11 @@ export const purchaseSubscription = async (
  */
 export const restorePurchases = async (): Promise<PurchaseResult> => {
   try {
-    log('Restoring purchases...');
+    debug('revenueCat', 'Restoring purchases...');
     
     const customerInfo = await Purchases.restorePurchases();
     
-    logSuccess('Purchases restored successfully');
+    debugSuccess('revenueCat', 'Purchases restored successfully');
     
     // Sync subscription status to Firestore after successful restore
     await syncSubscriptionToFirestore();
@@ -320,7 +310,7 @@ export const restorePurchases = async (): Promise<PurchaseResult> => {
       customerInfo,
     };
   } catch (error: any) {
-    logError('Failed to restore purchases:', error);
+    debugError('revenueCat', 'Failed to restore purchases:', error);
     return {
       success: false,
       error: error.message || 'Failed to restore purchases',
@@ -373,7 +363,7 @@ export const getSubscriptionStatus = async (): Promise<SubscriptionStatus> => {
       periodType: entitlement.periodType || null,
     };
   } catch (error: any) {
-    logError('Failed to get subscription status:', error);
+    debugError('revenueCat', 'Failed to get subscription status:', error);
     return {
       isActive: false,
       expirationDate: null,
@@ -392,13 +382,13 @@ export const syncSubscriptionToFirestore = async (): Promise<void> => {
   try {
     const user = auth.currentUser;
     if (!user) {
-      log('No Firebase user, skipping Firestore sync');
+      debug('revenueCat', 'No Firebase user, skipping Firestore sync');
       return;
     }
 
     const customerInfo = await getCustomerInfo();
     if (!customerInfo) {
-      log('No customer info, skipping Firestore sync');
+      debug('revenueCat', 'No customer info, skipping Firestore sync');
       return;
     }
 
@@ -449,9 +439,9 @@ export const syncSubscriptionToFirestore = async (): Promise<void> => {
       });
     }
 
-    logSuccess('Subscription status synced to Firestore');
+    debugSuccess('revenueCat', 'Subscription status synced to Firestore');
   } catch (error: any) {
-    logError('Failed to sync subscription to Firestore:', error);
+    debugError('revenueCat', 'Failed to sync subscription to Firestore:', error);
   }
 };
 
@@ -463,17 +453,17 @@ export const syncWithFirebaseAuth = async (): Promise<void> => {
   try {
     const user = auth.currentUser;
     if (!user) {
-      log('No Firebase user, skipping sync');
+      debug('revenueCat', 'No Firebase user, skipping sync');
       return;
     }
     
     await setRevenueCatUserId(user.uid);
-    logSuccess('Synced RevenueCat with Firebase Auth');
+    debugSuccess('revenueCat', 'Synced RevenueCat with Firebase Auth');
     
     // Also sync subscription status to Firestore
     await syncSubscriptionToFirestore();
   } catch (error: any) {
-    logError('Failed to sync with Firebase Auth:', error);
+    debugError('revenueCat', 'Failed to sync with Firebase Auth:', error);
   }
 };
 

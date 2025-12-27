@@ -9,6 +9,8 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
+  LayoutAnimation,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, {
@@ -29,7 +31,7 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
-import { saveUserProfile } from '@/services/userService';
+import { saveUserProfile, ValidationError } from '@/services/userService';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -153,8 +155,52 @@ export default function OnboardingScreen() {
       router.replace('/home');
     } catch (error) {
       console.error('Error saving profile:', error);
-      // Still navigate even if save fails
-      router.replace('/home');
+      
+      // Show user-friendly error message for validation errors
+      if (error instanceof ValidationError) {
+        // Map validation error field to onboarding step
+        const fieldToStep: Record<string, OnboardingStep> = {
+          'name': 'welcome',
+          'occupation': 'occupation',
+          'codingLevel': 'level',
+          'goals': 'goals',
+        };
+        
+        // Navigate back to the step with the error
+        const errorStep = fieldToStep[error.field || ''] || 'welcome';
+        
+        // Stop loading first
+        setIsLoading(false);
+        
+        // Navigate to the step with the error
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setCurrentStep(errorStep);
+        
+        // Show alert after a brief delay to allow step transition
+        setTimeout(() => {
+          Alert.alert(
+            'Validation Error',
+            error.message || 'Please check your input and try again.',
+            [{ 
+              text: 'OK',
+              onPress: () => {
+                // User can now see the step with the error and fix it
+                // Back button is available to navigate further back if needed
+              }
+            }]
+          );
+        }, 300);
+        
+        // Don't navigate away - user stays on the step with the error
+        return;
+      }
+      
+      // For other errors, still navigate (graceful degradation)
+      Alert.alert(
+        'Error',
+        'Failed to save profile. You can update it later in settings.',
+        [{ text: 'OK', onPress: () => router.replace('/home') }]
+      );
     } finally {
       setIsLoading(false);
     }
@@ -448,8 +494,8 @@ export default function OnboardingScreen() {
         </Animated.Text>
       </View>
 
-      {/* Back Button */}
-      {currentStepIndex > 0 && currentStep !== 'complete' && (
+      {/* Back Button - Show on all steps except first, including complete step */}
+      {currentStepIndex > 0 && (
         <Pressable style={styles.backButton} onPress={handleBack}>
           <Ionicons name="arrow-back" size={20} color={colors.textSecondary} />
         </Pressable>

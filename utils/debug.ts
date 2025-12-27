@@ -6,7 +6,7 @@
  */
 
 // Master switch - set to false to disable all debug logging
-const DEBUG_ENABLED = true;
+const DEBUG_ENABLED = false;
 
 // Category toggles - enable/disable specific debug areas
 const DEBUG_CATEGORIES = {
@@ -19,6 +19,9 @@ const DEBUG_CATEGORIES = {
   api: true,         // API calls
   ui: true,          // UI state changes
   revenueCat: true,   // RevenueCat operations
+  feed: false,         // Feed operations
+  cache: true,       // Cache operations (hits, misses, writes)
+  stats: false,       // User stats operations
 };
 
 type DebugCategory = keyof typeof DEBUG_CATEGORIES;
@@ -33,6 +36,10 @@ const CATEGORY_EMOJIS: Record<DebugCategory, string> = {
   storage: '🗄️',
   api: '🌐',
   ui: '🎨',
+  revenueCat: '💰',
+  feed: '🔄',
+  cache: '💾',
+  stats: '📊',
 };
 
 /**

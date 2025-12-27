@@ -19,6 +19,13 @@ import { auth } from '@/config/firebase';
 import { debug, debugSuccess, debugError } from '@/utils/debug';
 import { deleteUserData } from '@/services/userService';
 import { logOutRevenueCat } from '@/services/revenueCatService';
+import {
+  checkRateLimit,
+  recordFailedAttempt,
+  clearRateLimit,
+  getRemainingBlockTime,
+  formatRemainingTime,
+} from '@/utils/rateLimit';
 
 interface AuthContextType {
   user: User | null;
@@ -151,10 +158,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Email Sign Up
   const signUpWithEmail = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
+      // Normalize email for rate limiting
+      const normalizedEmail = email.toLowerCase().trim();
+      
+      // Check rate limit
+      const rateLimitCheck = await checkRateLimit(normalizedEmail);
+      if (rateLimitCheck.isBlocked) {
+        const remainingTime = rateLimitCheck.retryAfter 
+          ? formatRemainingTime(Math.ceil((rateLimitCheck.retryAfter - Date.now()) / 1000))
+          : '30 minutes';
+        return {
+          success: false,
+          error: `Too many failed attempts. Please try again in ${remainingTime}.`,
+        };
+      }
+
       await createUserWithEmailAndPassword(auth, email, password);
+      
+      // Clear rate limit on successful signup
+      await clearRateLimit(normalizedEmail);
+      
       return { success: true };
     } catch (error: any) {
       console.error('Email sign up error:', error);
+      
+      // Record failed attempt for rate limiting
+      const normalizedEmail = email.toLowerCase().trim();
+      await recordFailedAttempt(normalizedEmail);
+      
       // Parse Firebase error codes to user-friendly messages
       let errorMessage = 'Failed to create account. Please try again.';
       if (error.code === 'auth/email-already-in-use') {
@@ -164,6 +195,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } else if (error.code === 'auth/weak-password') {
         errorMessage = 'Password should be at least 6 characters.';
       }
+      
+      // Check if rate limited after this attempt
+      const rateLimitCheck = await checkRateLimit(normalizedEmail);
+      if (rateLimitCheck.isBlocked) {
+        const remainingTime = rateLimitCheck.retryAfter 
+          ? formatRemainingTime(Math.ceil((rateLimitCheck.retryAfter - Date.now()) / 1000))
+          : '30 minutes';
+        errorMessage = `Too many failed attempts. Please try again in ${remainingTime}.`;
+      } else if (rateLimitCheck.remainingAttempts !== undefined && rateLimitCheck.remainingAttempts <= 2) {
+        errorMessage += ` (${rateLimitCheck.remainingAttempts} attempt${rateLimitCheck.remainingAttempts !== 1 ? 's' : ''} remaining)`;
+      }
+      
       return { success: false, error: errorMessage };
     }
   };
@@ -171,10 +214,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Email Sign In
   const signInWithEmail = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
+      // Normalize email for rate limiting
+      const normalizedEmail = email.toLowerCase().trim();
+      
+      // Check rate limit
+      const rateLimitCheck = await checkRateLimit(normalizedEmail);
+      if (rateLimitCheck.isBlocked) {
+        const remainingTime = rateLimitCheck.retryAfter 
+          ? formatRemainingTime(Math.ceil((rateLimitCheck.retryAfter - Date.now()) / 1000))
+          : '30 minutes';
+        return {
+          success: false,
+          error: `Too many failed attempts. Please try again in ${remainingTime}.`,
+        };
+      }
+
       await signInWithEmailAndPassword(auth, email, password);
+      
+      // Clear rate limit on successful signin
+      await clearRateLimit(normalizedEmail);
+      
       return { success: true };
     } catch (error: any) {
       console.error('Email sign in error:', error);
+      
+      // Record failed attempt for rate limiting
+      const normalizedEmail = email.toLowerCase().trim();
+      await recordFailedAttempt(normalizedEmail);
+      
       // Parse Firebase error codes to user-friendly messages
       let errorMessage = 'Failed to sign in. Please try again.';
       if (error.code === 'auth/user-not-found') {
@@ -188,6 +255,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } else if (error.code === 'auth/too-many-requests') {
         errorMessage = 'Too many failed attempts. Please try again later.';
       }
+      
+      // Check if rate limited after this attempt
+      const rateLimitCheck = await checkRateLimit(normalizedEmail);
+      if (rateLimitCheck.isBlocked) {
+        const remainingTime = rateLimitCheck.retryAfter 
+          ? formatRemainingTime(Math.ceil((rateLimitCheck.retryAfter - Date.now()) / 1000))
+          : '30 minutes';
+        errorMessage = `Too many failed attempts. Please try again in ${remainingTime}.`;
+      } else if (rateLimitCheck.remainingAttempts !== undefined && rateLimitCheck.remainingAttempts <= 2) {
+        errorMessage += ` (${rateLimitCheck.remainingAttempts} attempt${rateLimitCheck.remainingAttempts !== 1 ? 's' : ''} remaining)`;
+      }
+      
       return { success: false, error: errorMessage };
     }
   };

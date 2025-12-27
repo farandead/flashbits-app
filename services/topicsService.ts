@@ -10,6 +10,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { Topic } from '@/data/questions';
+import { generateCacheKey, getCachedData, setCachedData, clearCacheByPrefix } from './cacheService';
+
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes cache TTL for topics (longer since they change less frequently)
 
 type IoniconsName = string; // We'll use string for icon names from Firestore
 
@@ -30,13 +33,27 @@ export interface TopicConfig {
  */
 export const getTopics = async (): Promise<TopicConfig[]> => {
   try {
+    // Generate cache key
+    const cacheKey = generateCacheKey('topics:all');
+    
+    // Try to get from cache first
+    const cached = await getCachedData<TopicConfig[]>(cacheKey, CACHE_TTL);
+    if (cached) {
+      return cached;
+    }
+    
     const topicsRef = collection(db, 'topics');
     const q = query(topicsRef, orderBy('order', 'asc'));
     const querySnapshot = await getDocs(q);
     
     if (querySnapshot.empty) {
       console.log('No topics found in Firestore, returning default topics');
-      return getDefaultTopics();
+      const defaultTopics = getDefaultTopics();
+      
+      // Cache default topics
+      await setCachedData<TopicConfig[]>(cacheKey, defaultTopics, CACHE_TTL);
+      
+      return defaultTopics;
     }
     
     const topics: TopicConfig[] = [];
@@ -55,13 +72,24 @@ export const getTopics = async (): Promise<TopicConfig[]> => {
     });
     
     // Filter out disabled topics and sort by order
-    return topics
+    const filteredTopics = topics
       .filter(topic => topic.enabled !== false)
       .sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    // Cache the result
+    await setCachedData<TopicConfig[]>(cacheKey, filteredTopics, CACHE_TTL);
+    
+    return filteredTopics;
   } catch (error) {
     console.error('Error fetching topics from Firestore:', error);
     // Fallback to default topics on error
-    return getDefaultTopics();
+    const defaultTopics = getDefaultTopics();
+    
+    // Cache default topics even on error
+    const cacheKey = generateCacheKey('topics:all');
+    await setCachedData<TopicConfig[]>(cacheKey, defaultTopics, CACHE_TTL);
+    
+    return defaultTopics;
   }
 };
 
@@ -70,12 +98,21 @@ export const getTopics = async (): Promise<TopicConfig[]> => {
  */
 export const getTopic = async (topicId: Topic): Promise<TopicConfig | null> => {
   try {
+    // Generate cache key
+    const cacheKey = generateCacheKey('topic:id', { topicId });
+    
+    // Try to get from cache first
+    const cached = await getCachedData<TopicConfig>(cacheKey, CACHE_TTL);
+    if (cached) {
+      return cached;
+    }
+    
     const topicRef = doc(db, 'topics', topicId);
     const topicSnap = await getDoc(topicRef);
     
     if (topicSnap.exists()) {
       const data = topicSnap.data();
-      return {
+      const topic = {
         id: data.id as Topic,
         name: data.name,
         icon: data.icon,
@@ -85,6 +122,11 @@ export const getTopic = async (topicId: Topic): Promise<TopicConfig | null> => {
         createdAt: data.createdAt,
         updatedAt: data.updatedAt,
       };
+      
+      // Cache the result
+      await setCachedData<TopicConfig>(cacheKey, topic, CACHE_TTL);
+      
+      return topic;
     }
     return null;
   } catch (error) {

@@ -11,6 +11,11 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
+import { sanitizeUserProfile } from '@/utils/sanitize';
+import { validateUserProfile, ValidationError } from '@/utils/validateProfile';
+
+// Export ValidationError for use in components
+export { ValidationError };
 
 // User profile interface
 export interface UserProfile {
@@ -29,19 +34,33 @@ export interface UserProfile {
 
 /**
  * Save user profile to Firestore
+ * 
+ * @throws ValidationError if profile data is invalid
  */
 export const saveUserProfile = async (
   userId: string, 
   profile: UserProfile
 ): Promise<void> => {
   try {
+    // Validate user profile data before processing
+    validateUserProfile(profile, false);
+    
+    // Sanitize user profile data after validation
+    const sanitizedProfile = sanitizeUserProfile(profile);
+    
     const userRef = doc(db, 'users', userId);
     await setDoc(userRef, {
-      ...profile,
+      ...sanitizedProfile,
       updatedAt: new Date().toISOString(),
     }, { merge: true });
-    console.log('User profile saved successfully');
+    if (__DEV__) {
+      console.log('User profile saved successfully');
+    }
   } catch (error) {
+    // Re-throw validation errors as-is
+    if (error instanceof ValidationError) {
+      throw error;
+    }
     console.error('Error saving user profile:', error);
     throw error;
   }
@@ -80,19 +99,33 @@ export const hasCompletedOnboarding = async (userId: string): Promise<boolean> =
 
 /**
  * Update user profile fields
+ * 
+ * @throws ValidationError if update data is invalid
  */
 export const updateUserProfile = async (
   userId: string, 
   updates: Partial<UserProfile>
 ): Promise<void> => {
   try {
+    // Validate updates (partial validation - only validate provided fields)
+    validateUserProfile(updates, true);
+    
+    // Sanitize updates after validation
+    const sanitizedUpdates = sanitizeUserProfile(updates);
+    
     const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {
-      ...updates,
+      ...sanitizedUpdates,
       updatedAt: new Date().toISOString(),
     });
-    console.log('User profile updated successfully');
+    if (__DEV__) {
+      console.log('User profile updated successfully');
+    }
   } catch (error) {
+    // Re-throw validation errors as-is
+    if (error instanceof ValidationError) {
+      throw error;
+    }
     console.error('Error updating user profile:', error);
     throw error;
   }
@@ -119,17 +152,24 @@ export const deleteUserData = async (userId: string): Promise<void> => {
       console.log('User stats deleted');
     }
     
-    // Delete user activities (activities created by this user)
-    const activitiesRef = collection(db, 'activities');
-    const activitiesQuery = query(activitiesRef, where('userId', '==', userId));
-    const activitiesSnap = await getDocs(activitiesQuery);
-    
-    const deletePromises = activitiesSnap.docs.map(async (activityDoc) => {
-      await deleteDoc(activityDoc.ref);
-    });
-    
-    await Promise.all(deletePromises);
-    console.log(`Deleted ${activitiesSnap.docs.length} user activities`);
+    // Delete user activities from internal collection (if it exists)
+    // Note: Public activities don't have userId, so we can't delete them by userId
+    // This is intentional for privacy - public activities are anonymized
+    try {
+      const activitiesInternalRef = collection(db, 'activitiesInternal');
+      const activitiesQuery = query(activitiesInternalRef, where('userId', '==', userId));
+      const activitiesSnap = await getDocs(activitiesQuery);
+      
+      const deletePromises = activitiesSnap.docs.map(async (activityDoc) => {
+        await deleteDoc(activityDoc.ref);
+      });
+      
+      await Promise.all(deletePromises);
+      console.log(`Deleted ${activitiesSnap.docs.length} internal user activities`);
+    } catch (error) {
+      // Internal activities collection may not exist yet - that's okay
+      console.log('No internal activities to delete (collection may not exist)');
+    }
     
     console.log('All user data deleted successfully');
   } catch (error) {

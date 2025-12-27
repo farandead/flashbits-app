@@ -8,6 +8,7 @@ import {
   type PaginatedQuestionsResult,
 } from '@/services/questionsService';
 import type { QueryDocumentSnapshot } from 'firebase/firestore';
+import { useDebounce, useDebounceArray } from '@/utils/debounce';
 
 interface UseQuestionsOptions {
   topics?: Topic[];
@@ -40,12 +41,22 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
     pageSize = 50
   } = options;
   
+  // Debounce filter changes to prevent excessive API calls
+  // 500ms delay - enough to wait for user to finish selecting filters
+  // Note: Initial load uses original values, subsequent changes use debounced values
+  const debouncedTopics = useDebounceArray(topics || [], 500);
+  const debouncedDifficulties = useDebounceArray(difficulties || [], 500);
+  const debouncedCategory = useDebounce(category || 'all', 500);
+  
   const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
   const [hasMore, setHasMore] = useState(false);
+  
+  // Track if component has mounted (don't debounce initial load)
+  const hasMounted = useRef(false);
   
   // Use ref to track lastDoc to avoid dependency issues
   const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
@@ -93,6 +104,12 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
     }
     
     try {
+      // Use debounced values for filters (but use original for initial load)
+      // After first mount, use debounced values to prevent excessive API calls
+      const activeTopics = !hasMounted.current ? (topics || []) : debouncedTopics;
+      const activeDifficulties = !hasMounted.current ? (difficulties || []) : debouncedDifficulties;
+      const activeCategory = !hasMounted.current ? (category || 'all') : debouncedCategory;
+      
       let result: PaginatedQuestionsResult | { questions: Question[] };
       
       // Use pagination if enabled
@@ -101,11 +118,11 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
         const currentLastDoc = isLoadMore ? lastDocRef.current || undefined : undefined;
         
         // If filters are provided, use filtered paginated fetch
-        if ((topics && topics.length > 0) || (difficulties && difficulties.length > 0) || (category && category !== 'all')) {
+        if ((activeTopics.length > 0) || (activeDifficulties.length > 0) || (activeCategory !== 'all')) {
           result = await fetchQuestionsWithFiltersPaginated(
-            topics, 
-            difficulties, 
-            category, 
+            activeTopics, 
+            activeDifficulties, 
+            activeCategory, 
             pageSize,
             currentLastDoc
           );
@@ -133,16 +150,23 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
           // If no questions from Firestore, fallback to mock
           if (paginatedResult.questions.length === 0 && !isLoadMore) {
             let fallbackQuestions = mockQuestions;
-            if (topics && topics.length > 0) {
-              fallbackQuestions = fallbackQuestions.filter(q => topics.includes(q.topic));
+            if (activeTopics.length > 0) {
+              fallbackQuestions = fallbackQuestions.filter(q => activeTopics.includes(q.topic));
             }
-            if (difficulties && difficulties.length > 0) {
-              fallbackQuestions = fallbackQuestions.filter(q => difficulties.includes(q.difficulty));
+            if (activeDifficulties.length > 0) {
+              fallbackQuestions = fallbackQuestions.filter(q => activeDifficulties.includes(q.difficulty));
             }
-            if (category && category !== 'all') {
-              fallbackQuestions = fallbackQuestions.filter(q => (q.category || 'general') === category);
+            if (activeCategory !== 'all') {
+              fallbackQuestions = fallbackQuestions.filter(q => (q.category || 'general') === activeCategory);
             }
-            fallbackQuestions = applyCompanyFilter(fallbackQuestions);
+            // Use original companies for filtering (not debounced)
+            const activeCompanies = companies || [];
+            if (activeCompanies.length > 0) {
+              fallbackQuestions = fallbackQuestions.filter(q => {
+                if (!q.companies || q.companies.length === 0) return true;
+                return q.companies.some(company => activeCompanies.includes(company));
+              });
+            }
             if (shuffle) {
               fallbackQuestions = shuffleArray(fallbackQuestions);
             }
@@ -170,8 +194,8 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
         // Legacy non-paginated approach
         let fetchedQuestions: Question[];
         
-        if ((topics && topics.length > 0) || (difficulties && difficulties.length > 0) || (category && category !== 'all')) {
-          fetchedQuestions = await fetchQuestionsWithFilters(topics, difficulties, category);
+        if ((activeTopics.length > 0) || (activeDifficulties.length > 0) || (activeCategory !== 'all')) {
+          fetchedQuestions = await fetchQuestionsWithFilters(activeTopics, activeDifficulties, activeCategory);
         } else {
           fetchedQuestions = await fetchAllQuestionsLegacy();
         }
@@ -180,14 +204,14 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
         if (fetchedQuestions.length === 0) {
           fetchedQuestions = mockQuestions;
           
-          if (topics && topics.length > 0) {
-            fetchedQuestions = fetchedQuestions.filter(q => topics.includes(q.topic));
+          if (activeTopics.length > 0) {
+            fetchedQuestions = fetchedQuestions.filter(q => activeTopics.includes(q.topic));
           }
-          if (difficulties && difficulties.length > 0) {
-            fetchedQuestions = fetchedQuestions.filter(q => difficulties.includes(q.difficulty));
+          if (activeDifficulties.length > 0) {
+            fetchedQuestions = fetchedQuestions.filter(q => activeDifficulties.includes(q.difficulty));
           }
-          if (category && category !== 'all') {
-            fetchedQuestions = fetchedQuestions.filter(q => (q.category || 'general') === category);
+          if (activeCategory !== 'all') {
+            fetchedQuestions = fetchedQuestions.filter(q => (q.category || 'general') === activeCategory);
           }
         }
         
@@ -205,14 +229,18 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
       
       // Fallback to mock data on error
       let fallbackQuestions = mockQuestions;
-      if (topics && topics.length > 0) {
-        fallbackQuestions = fallbackQuestions.filter(q => topics.includes(q.topic));
+      const activeTopics = !hasMounted.current ? (topics || []) : debouncedTopics;
+      const activeDifficulties = !hasMounted.current ? (difficulties || []) : debouncedDifficulties;
+      const activeCategory = !hasMounted.current ? (category || 'all') : debouncedCategory;
+      
+      if (activeTopics.length > 0) {
+        fallbackQuestions = fallbackQuestions.filter(q => activeTopics.includes(q.topic));
       }
-      if (difficulties && difficulties.length > 0) {
-        fallbackQuestions = fallbackQuestions.filter(q => difficulties.includes(q.difficulty));
+      if (activeDifficulties.length > 0) {
+        fallbackQuestions = fallbackQuestions.filter(q => activeDifficulties.includes(q.difficulty));
       }
-      if (category && category !== 'all') {
-        fallbackQuestions = fallbackQuestions.filter(q => (q.category || 'general') === category);
+      if (activeCategory !== 'all') {
+        fallbackQuestions = fallbackQuestions.filter(q => (q.category || 'general') === activeCategory);
       }
       fallbackQuestions = applyCompanyFilter(fallbackQuestions);
       if (shuffle) {
@@ -223,8 +251,12 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
+      // Mark initial load as complete after first fetch
+      if (!hasMounted.current && !isLoadMore) {
+        hasMounted.current = true;
+      }
     }
-  }, [topics, difficulties, companies, category, shuffle, usePagination, pageSize]);
+  }, [debouncedTopics, debouncedDifficulties, debouncedCategory, companies, shuffle, usePagination, pageSize, topics, difficulties, category]);
   
   const loadMore = useCallback(async () => {
     if (!hasMore || isLoadingMore || isLoading) {

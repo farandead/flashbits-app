@@ -28,11 +28,10 @@ export type ActivityType =
   | 'streak_achieved'
   | 'xp_milestone';
 
-// Activity data structure
+// Activity data structure for public display (no userId for privacy)
 export interface Activity {
   id?: string;
   type: ActivityType;
-  userId: string;
   displayName: string; // First name or anonymous
   country?: string;
   countryCode?: string;
@@ -42,8 +41,20 @@ export interface Activity {
   isPublic: boolean; // Whether to show on landing page
 }
 
-// Collection name
-const ACTIVITIES_COLLECTION = 'activities';
+// Internal activity structure (includes userId for tracking - stored separately)
+interface InternalActivity extends Activity {
+  userId: string; // Only stored in private collection
+}
+
+// Collection names
+const ACTIVITIES_COLLECTION = 'activities'; // Public activities (no userId)
+const ACTIVITIES_INTERNAL_COLLECTION = 'activitiesInternal'; // Private activities (with userId for analytics)
+
+// Maximum allowed limit for activities queries (enforced by Firestore rules)
+export const MAX_ACTIVITIES_LIMIT = 50;
+
+// Default limit for activities queries
+const DEFAULT_ACTIVITIES_LIMIT = 20;
 
 // Get user's approximate location from their timezone
 const getCountryFromTimezone = (): { country: string; code: string } => {
@@ -121,6 +132,9 @@ const getDisplayName = (name?: string | null): string => {
 
 /**
  * Log an activity to Firestore
+ * 
+ * Privacy: Public activities do NOT include userId to prevent user tracking.
+ * Internal activities (with userId) are stored separately for analytics if needed.
  */
 export const logActivity = async (
   type: ActivityType,
@@ -133,10 +147,10 @@ export const logActivity = async (
     const location = getCountryFromTimezone();
     const displayName = getDisplayName(userName);
 
-    // Build activity object, excluding undefined fields
-    const activity: Record<string, any> = {
+    // Build PUBLIC activity object (NO userId for privacy)
+    const publicActivity: Record<string, any> = {
       type,
-      userId,
+      // userId is intentionally excluded from public activities
       displayName,
       country: location.country,
       countryCode: location.code,
@@ -147,11 +161,26 @@ export const logActivity = async (
 
     // Only add metadata if it's defined and not empty
     if (metadata && Object.keys(metadata).length > 0) {
-      activity.metadata = metadata;
+      publicActivity.metadata = metadata;
     }
 
-    await addDoc(collection(db, ACTIVITIES_COLLECTION), activity);
-    console.log('📣 Activity logged:', type, message);
+    // Store public activity (no userId)
+    await addDoc(collection(db, ACTIVITIES_COLLECTION), publicActivity);
+    
+    // Optionally store internal activity with userId for analytics
+    // This is stored in a separate private collection
+    // Uncomment if you need user-level analytics:
+    /*
+    const internalActivity: Record<string, any> = {
+      ...publicActivity,
+      userId, // Only in internal collection
+    };
+    await addDoc(collection(db, ACTIVITIES_INTERNAL_COLLECTION), internalActivity);
+    */
+    
+    if (__DEV__) {
+      console.log('📣 Activity logged:', type, message);
+    }
   } catch (error) {
     // Don't throw - activity logging shouldn't break the app
     console.error('Error logging activity:', error);
@@ -160,14 +189,27 @@ export const logActivity = async (
 
 /**
  * Get recent public activities for the landing page
+ * 
+ * @param maxResults - Maximum number of activities to fetch (default: 20, max: 50)
+ * @returns Array of recent public activities
  */
-export const getRecentActivities = async (maxResults: number = 20): Promise<Activity[]> => {
+export const getRecentActivities = async (maxResults: number = DEFAULT_ACTIVITIES_LIMIT): Promise<Activity[]> => {
   try {
+    // Enforce maximum limit to comply with Firestore security rules
+    const limitValue = Math.min(maxResults, MAX_ACTIVITIES_LIMIT);
+    
+    if (limitValue <= 0) {
+      if (__DEV__) {
+        console.warn('Invalid limit value, using default:', maxResults);
+      }
+      return [];
+    }
+    
     const q = query(
       collection(db, ACTIVITIES_COLLECTION),
       where('isPublic', '==', true),
       orderBy('createdAt', 'desc'),
-      limit(maxResults)
+      limit(limitValue)
     );
 
     const snapshot = await getDocs(q);

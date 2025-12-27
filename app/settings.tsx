@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
@@ -21,9 +22,9 @@ import { useSettings, QuestionStatusFilter } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
 import { Topic, Difficulty, Company, QuestionCategory } from '@/data/questions';
 import { useTopics } from '@/hooks/useTopics';
-import Paywall from '@/components/Paywall';
 import EmailVerificationBanner from '@/components/EmailVerificationBanner';
-import SubscriptionManager from '@/components/SubscriptionManager';
+// Lazy load heavy components for code splitting
+import { useLazyComponent, LazyLoadingOverlay } from '@/utils/lazyLoad';
 import { notificationService, NotificationSettings } from '@/services/notificationService';
 import { NOTIFICATION_MESSAGES } from '@/constants/notifications';
 import { SUPPORT_CONFIG } from '@/constants/support';
@@ -131,6 +132,17 @@ export default function SettingsScreen() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [showSubscriptionManager, setShowSubscriptionManager] = useState(false);
   const [showVerificationBanner, setShowVerificationBanner] = useState(false);
+  
+  // Lazy-loaded components for code splitting
+  const { Component: PaywallComponent, isLoading: isLoadingPaywall } = useLazyComponent(
+    () => import('@/components/Paywall'),
+    showPaywall
+  );
+  
+  const { Component: SubscriptionManagerComponent, isLoading: isLoadingSubscriptionManager } = useLazyComponent(
+    () => import('@/components/SubscriptionManager'),
+    showSubscriptionManager
+  );
   
   // Notification settings
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({
@@ -476,8 +488,9 @@ export default function SettingsScreen() {
   // Check Firebase question count
   const handleCheckCount = async () => {
     try {
-      const questions = await fetchAllQuestions();
-      setQuestionCount(questions.length);
+      const result = await fetchAllQuestions(50); // Use paginated version with page size
+      const questionCount = 'questions' in result ? result.questions.length : 0;
+      setQuestionCount(questionCount);
       if (hapticFeedback) {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
@@ -1689,18 +1702,24 @@ export default function SettingsScreen() {
         )}
       </ScrollView>
 
-      {/* Paywall Modal */}
-      <Paywall
-        visible={showPaywall}
-        onClose={() => setShowPaywall(false)}
-        onSelectPlan={handleSelectPlan}
-      />
+      {/* Paywall Modal - Lazy Loaded */}
+      <LazyLoadingOverlay visible={showPaywall && isLoadingPaywall} />
+      {showPaywall && PaywallComponent && (
+        <PaywallComponent
+          visible={showPaywall}
+          onClose={() => setShowPaywall(false)}
+          onSelectPlan={handleSelectPlan}
+        />
+      )}
 
-      {/* Subscription Manager Modal */}
-      <SubscriptionManager
-        visible={showSubscriptionManager}
-        onClose={() => setShowSubscriptionManager(false)}
-      />
+      {/* Subscription Manager Modal - Lazy Loaded */}
+      <LazyLoadingOverlay visible={showSubscriptionManager && isLoadingSubscriptionManager} />
+      {showSubscriptionManager && SubscriptionManagerComponent && (
+        <SubscriptionManagerComponent
+          visible={showSubscriptionManager}
+          onClose={() => setShowSubscriptionManager(false)}
+        />
+      )}
     </View>
   );
 }

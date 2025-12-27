@@ -1,7 +1,7 @@
 """
 GitHub OAuth Token Exchange Cloud Function
 Exchanges GitHub authorization code for access token and creates Firebase user
-Version: 1.3 - With service account key
+Version: 1.4 - With rate limiting
 """
 
 from firebase_functions import https_fn, options
@@ -9,6 +9,9 @@ from firebase_functions.params import SecretParam
 from firebase_admin import initialize_app, auth, credentials
 import requests
 import json
+import time
+from collections import defaultdict
+from threading import Lock
 
 # Initialize Firebase Admin with service account
 cred = credentials.Certificate('flashprep-11c85-firebase-adminsdk-fbsvc-fe4af16e3b.json')
@@ -18,10 +21,100 @@ initialize_app(cred)
 options.set_global_options(max_instances=10)
 
 # Define secrets
-
-
 GITHUB_CLIENT_ID = SecretParam('GITHUB_CLIENT_ID')
 GITHUB_CLIENT_SECRET = SecretParam('GITHUB_CLIENT_SECRET')
+
+# Rate limiting configuration
+RATE_LIMIT_WINDOW = 60  # Time window in seconds (1 minute)
+RATE_LIMIT_MAX_REQUESTS = 10  # Maximum requests per window per IP
+RATE_LIMIT_CLEANUP_INTERVAL = 300  # Clean up old entries every 5 minutes
+
+# Rate limiting storage (in-memory, per instance)
+# In production, consider using Firestore or Redis for distributed rate limiting
+_rate_limit_store = defaultdict(list)  # IP -> list of request timestamps
+_rate_limit_lock = Lock()
+_last_cleanup = time.time()
+
+
+def _get_client_ip(req: https_fn.Request) -> str:
+    """Extract client IP address from request."""
+    # Check X-Forwarded-For header (set by Firebase/Cloud Load Balancer)
+    forwarded_for = req.headers.get('X-Forwarded-For')
+    if forwarded_for:
+        # X-Forwarded-For can contain multiple IPs, take the first one
+        return forwarded_for.split(',')[0].strip()
+    
+    # Fallback to direct connection IP
+    return req.headers.get('X-Real-IP', 'unknown')
+
+
+def _cleanup_old_entries():
+    """Remove old entries from rate limit store to prevent memory leaks."""
+    global _last_cleanup, _rate_limit_store
+    
+    current_time = time.time()
+    if current_time - _last_cleanup < RATE_LIMIT_CLEANUP_INTERVAL:
+        return
+    
+    with _rate_limit_lock:
+        cutoff_time = current_time - RATE_LIMIT_WINDOW
+        for ip in list(_rate_limit_store.keys()):
+            # Remove timestamps older than the window
+            _rate_limit_store[ip] = [
+                timestamp for timestamp in _rate_limit_store[ip]
+                if timestamp > cutoff_time
+            ]
+            # Remove IPs with no recent requests
+            if not _rate_limit_store[ip]:
+                del _rate_limit_store[ip]
+        
+        _last_cleanup = current_time
+
+
+def _check_rate_limit(ip: str, add_request: bool = True) -> tuple[bool, int, int]:
+    """
+    Check if IP address has exceeded rate limit.
+    
+    Args:
+        ip: Client IP address
+        add_request: If True, add current request to the count. If False, just check.
+    
+    Returns:
+        (is_allowed, remaining_requests, reset_after_seconds)
+    """
+    current_time = time.time()
+    window_start = current_time - RATE_LIMIT_WINDOW
+    
+    with _rate_limit_lock:
+        # Clean up old entries periodically
+        _cleanup_old_entries()
+        
+        # Get recent requests for this IP
+        recent_requests = [
+            timestamp for timestamp in _rate_limit_store[ip]
+            if timestamp > window_start
+        ]
+        
+        # Count requests in current window
+        request_count = len(recent_requests)
+        
+        if request_count >= RATE_LIMIT_MAX_REQUESTS:
+            # Calculate when the oldest request in window will expire
+            if recent_requests:
+                oldest_request = min(recent_requests)
+                reset_after = int(RATE_LIMIT_WINDOW - (current_time - oldest_request)) + 1
+            else:
+                reset_after = RATE_LIMIT_WINDOW
+            
+            return (False, 0, reset_after)
+        
+        # Add current request timestamp if requested
+        if add_request:
+            recent_requests.append(current_time)
+            _rate_limit_store[ip] = recent_requests
+        
+        remaining = RATE_LIMIT_MAX_REQUESTS - (request_count + (1 if add_request else 0))
+        return (True, remaining, RATE_LIMIT_WINDOW)
 
 
 
@@ -64,6 +157,28 @@ def exchangeGitHubCode(req: https_fn.Request) -> https_fn.Response:
             headers={
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
+            }
+        )
+    
+    # Rate limiting check
+    client_ip = _get_client_ip(req)
+    is_allowed, remaining, reset_after = _check_rate_limit(client_ip)
+    
+    if not is_allowed:
+        return https_fn.Response(
+            json.dumps({
+                'error': 'Rate limit exceeded',
+                'message': f'Too many requests. Please try again in {reset_after} seconds.',
+                'retry_after': reset_after
+            }),
+            status=429,
+            headers={
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'X-RateLimit-Limit': str(RATE_LIMIT_MAX_REQUESTS),
+                'X-RateLimit-Remaining': '0',
+                'X-RateLimit-Reset': str(int(time.time()) + reset_after),
+                'Retry-After': str(reset_after)
             }
         )
     
@@ -263,12 +378,19 @@ def exchangeGitHubCode(req: https_fn.Request) -> https_fn.Response:
             }
         }
         print(f"Returning response with custom token")
+        
+        # Get current rate limit status for response headers (don't add another request)
+        _, remaining, _ = _check_rate_limit(client_ip, add_request=False)
+        
         return https_fn.Response(
             json.dumps(response_data),
             status=200,
             headers={
                 'Content-Type': 'application/json',
-                'Access-Control-Allow-Origin': '*'
+                'Access-Control-Allow-Origin': '*',
+                'X-RateLimit-Limit': str(RATE_LIMIT_MAX_REQUESTS),
+                'X-RateLimit-Remaining': str(remaining),
+                'X-RateLimit-Reset': str(int(time.time()) + RATE_LIMIT_WINDOW)
             }
         )
         

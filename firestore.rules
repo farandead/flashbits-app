@@ -3,10 +3,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Questions - anyone can read, authenticated users can write
+    // Questions - anyone can read, only admins can write
     match /questions/{questionId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if request.auth != null && request.auth.token.admin == true;
     }
 
     // User profiles - only owner can read/write
@@ -19,11 +19,29 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // Activities - public read for social proof, authenticated users can create
+    // Activities - public read for social proof with limits, authenticated users can create
+    // NOTE: Query limits are enforced in application code (max 50 results)
+    // Firestore security rules cannot directly check query limits for collection queries
+    // PRIVACY: Public activities do NOT contain userId to prevent user tracking
     match /activities/{activityId} {
       // Anyone can read public activities (for landing page social proof)
-      allow read: if resource.data.isPublic == true;
-      // Authenticated users can create activities
+      // Application code must always use limit() with max 50 to prevent excessive data access
+      // Security rule ensures userId is not exposed in public activities
+      allow read: if resource.data.isPublic == true
+                  && !('userId' in resource.data); // Ensure userId is not in public activities
+      // Authenticated users can create activities (without userId for privacy)
+      allow create: if request.auth != null
+                    && !('userId' in request.resource.data); // Prevent userId in public activities
+      // No updates or deletes allowed
+      allow update, delete: if false;
+    }
+    
+    // Internal activities collection (with userId) - private, for analytics only
+    match /activitiesInternal/{activityId} {
+      // Only the user who created it can read their own activities
+      allow read: if request.auth != null 
+                  && request.auth.uid == resource.data.userId;
+      // Authenticated users can create their own activities
       allow create: if request.auth != null 
                     && request.resource.data.userId == request.auth.uid;
       // No updates or deletes allowed
@@ -34,13 +52,8 @@ service cloud.firestore {
     match /topics/{topicId} {
       // Anyone can read topics (needed for settings page)
       allow read: if true;
-      // Only authenticated users can write (admin panel will handle auth)
-      allow write: if request.auth != null;
-    }
-
-    // Temporary fallback rule (remove before production)
-    match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2026, 1, 17);
+      // Only admins can write
+      allow write: if request.auth != null && request.auth.token.admin == true;
     }
   }
 }

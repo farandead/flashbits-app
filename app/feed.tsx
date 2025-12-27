@@ -30,6 +30,7 @@ import { initializeSounds, playCorrectSound, playIncorrectSound, cleanupSounds, 
 import { logRankUp, logQuestionsCompleted, logStartedPracticing } from '@/services/activityService';
 import { getUserProfile } from '@/services/userService';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
+import { debug, debugError } from '@/utils/debug';
 
 type IoniconsName = keyof typeof Ionicons.glyphMap;
 
@@ -110,7 +111,15 @@ export default function QuestionFeed() {
     transform: [{ translateY: skipToastTranslateY.value }],
   }));
 
+  // Track skip toast timeout for cleanup
+  const skipToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const showSkipNotification = useCallback((questionTopic: string) => {
+    // Clear any existing timeout
+    if (skipToastTimeoutRef.current) {
+      clearTimeout(skipToastTimeoutRef.current);
+    }
+    
     setLastSkippedQuestion(questionTopic);
     setShowSkipToast(true);
     skipToastOpacity.value = withSequence(
@@ -124,13 +133,25 @@ export default function QuestionFeed() {
       withTiming(-20, { duration: 300 })
     );
     
-    // Hide after animation
-    setTimeout(() => setShowSkipToast(false), 2000);
+    // Hide after animation - store timeout ID for cleanup
+    skipToastTimeoutRef.current = setTimeout(() => {
+      setShowSkipToast(false);
+      skipToastTimeoutRef.current = null;
+    }, 2000);
+  }, []);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (skipToastTimeoutRef.current) {
+        clearTimeout(skipToastTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Fetch questions from Firebase (with fallback to mock data)
   // Pass selected topics, difficulties, companies, and category from settings
-  const { feedQuestions, isLoading, error, refetch } = useInfiniteQuestions({
+  const { feedQuestions, isLoading, error, refetch, hasMore, loadMore, isLoadingMore } = useInfiniteQuestions({
     topics: topicsArray,
     difficulties: difficultiesArray,
     companies: companiesArray,
@@ -139,29 +160,50 @@ export default function QuestionFeed() {
   });
 
   // Filter questions based on status filter
+  // Note: We only check previouslyAnswered (from Firestore), NOT session answeredQuestions
+  // This ensures questions answered in the current session stay visible until user swipes
   const filteredQuestions = useMemo(() => {
+    debug('feed', 'filteredQuestions recalculating:', {
+      feedQuestionsLength: feedQuestions.length,
+      questionStatusFilter,
+      previouslyAnsweredSize: previouslyAnswered.size,
+      answeredQuestionsSize: answeredQuestions.size,
+    });
+    
     if (questionStatusFilter === 'all') {
+      debug('feed', 'Filter: all - returning all questions');
       return feedQuestions;
     }
 
-    return feedQuestions.filter((question) => {
-      const isAnswered = previouslyAnswered.has(question.id);
+    const filtered = feedQuestions.filter((question) => {
+      // Only check previouslyAnswered (from Firestore), not current session answers
+      // This prevents questions from disappearing immediately after answering
+      const isPreviouslyAnswered = previouslyAnswered.has(question.id);
       
       switch (questionStatusFilter) {
         case 'new':
-          // Show only questions that haven't been answered at all
-          return !isAnswered;
+          // Show only questions that haven't been answered before (from Firestore)
+          // Questions answered in current session will still show until user swipes
+          return !isPreviouslyAnswered;
         case 'attempted':
-          // Show questions that have been answered (correct or wrong)
-          return isAnswered;
+          // Show questions that have been answered before (from Firestore)
+          return isPreviouslyAnswered;
         case 'unattempted':
-          // Show questions not attempted (same as new)
-          return !isAnswered;
+          // Show questions not attempted before (same as new)
+          return !isPreviouslyAnswered;
         default:
           return true;
       }
     });
-  }, [feedQuestions, questionStatusFilter, previouslyAnswered]);
+    
+    debug('feed', 'Filtered questions result:', {
+      originalLength: feedQuestions.length,
+      filteredLength: filtered.length,
+      questionStatusFilter,
+    });
+    
+    return filtered;
+  }, [feedQuestions, questionStatusFilter, previouslyAnswered, answeredQuestions]);
 
   // Initialize and cleanup sounds
   useEffect(() => {
@@ -198,7 +240,7 @@ export default function QuestionFeed() {
           const profile = await getUserProfile(user.uid);
           setUserName(profile?.name || user.displayName || null);
           
-          console.log('📊 Loaded user stats:', {
+          debug('feed', 'Loaded user stats:', {
             answered: stats.answeredQuestionIds?.length || 0,
             correct: stats.correctQuestionIds?.length || 0,
             wrong: stats.wrongQuestionIds?.length || 0,
@@ -207,7 +249,7 @@ export default function QuestionFeed() {
             rank: currentRank.current.name,
           });
         } catch (error) {
-          console.error('Error loading user data:', error);
+          debugError('feed', 'Error loading user data:', error);
         }
       } else {
         // Reset state if user logs out
@@ -264,7 +306,23 @@ export default function QuestionFeed() {
   // Handle answer
   const handleAnswer = useCallback(
     async (isCorrect: boolean, questionId: string, topic?: string, difficulty?: string) => {
-      setAnsweredQuestions((prev) => new Set([...prev, questionId]));
+      debug('feed', 'handleAnswer called:', {
+        questionId,
+        isCorrect,
+        currentIndex,
+        currentQuestionId: filteredQuestions[currentIndex]?.id,
+        filteredQuestionsLength: filteredQuestions.length,
+      });
+      
+      setAnsweredQuestions((prev) => {
+        const next = new Set([...prev, questionId]);
+        debug('feed', 'Updated answeredQuestions:', {
+          previousSize: prev.size,
+          newSize: next.size,
+          questionId,
+        });
+        return next;
+      });
       
       // Track session questions and log activities
       const newSessionCount = sessionQuestionsAnswered + 1;
@@ -298,8 +356,11 @@ export default function QuestionFeed() {
         // Check if this is the first time answering correctly (to update XP)
         const wasCorrectBefore = previouslyCorrect.has(questionId);
         
-        // Update historical tracking
-        setPreviouslyAnswered((prev) => new Set([...prev, questionId]));
+        // Update historical tracking - BUT don't update previouslyAnswered immediately
+        // This prevents the question from being filtered out until user swipes
+        // We'll update it when the user actually navigates away
+        debug('feed', 'Correct answer - NOT updating previouslyAnswered yet to prevent auto-advance');
+        // setPreviouslyAnswered((prev) => new Set([...prev, questionId])); // REMOVED - update on swipe instead
         setPreviouslyCorrect((prev) => new Set([...prev, questionId]));
         setPreviouslyWrong((prev) => {
           const next = new Set(prev);
@@ -329,8 +390,10 @@ export default function QuestionFeed() {
         
         setWrongQuestions((prev) => new Set([...prev, questionId]));
         
-        // Update historical tracking
-        setPreviouslyAnswered((prev) => new Set([...prev, questionId]));
+        // Update historical tracking - BUT don't update previouslyAnswered immediately
+        // This prevents the question from being filtered out until user swipes
+        debug('feed', 'Wrong answer - NOT updating previouslyAnswered yet to prevent auto-advance');
+        // setPreviouslyAnswered((prev) => new Set([...prev, questionId])); // REMOVED - update on swipe instead
         setPreviouslyWrong((prev) => new Set([...prev, questionId]));
         // Don't remove from previouslyCorrect - once solved correctly, always show as solved
         setPreviouslySkipped((prev) => {
@@ -362,41 +425,79 @@ export default function QuestionFeed() {
     ({ viewableItems }: { viewableItems: ViewToken[] }) => {
       if (viewableItems.length > 0 && viewableItems[0].index !== null) {
         const newIndex = viewableItems[0].index;
+        const isEndScreen = newIndex >= filteredQuestions.length;
+        
+        debug('feed', 'onViewableItemsChanged:', {
+          newIndex,
+          currentIndex,
+          isEndScreen,
+          filteredQuestionsLength: filteredQuestions.length,
+          previousQuestionId: currentIndex >= 0 && currentIndex < filteredQuestions.length ? filteredQuestions[currentIndex]?.id : null,
+          newQuestionId: !isEndScreen && newIndex < filteredQuestions.length ? filteredQuestions[newIndex]?.id : 'END_SCREEN',
+          wasAnswered: currentIndex >= 0 && currentIndex < filteredQuestions.length ? answeredQuestions.has(filteredQuestions[currentIndex]?.id) : false,
+        });
 
-        // Check if user swiped past without answering (skipped)
-        if (
-          newIndex > currentIndex &&
-          !answeredQuestions.has(filteredQuestions[currentIndex]?.id)
-        ) {
-          const skippedQ = filteredQuestions[currentIndex];
-          setSkippedQuestions((prev) =>
-            new Set([...prev, skippedQ?.id])
-          );
-          
-          // Show skip notification and save to Firestore
-          if (skippedQ) {
-            showSkipNotification(skippedQ.topic);
-            if (hapticFeedback) {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        // Don't process skip logic if we're on the end screen
+        if (!isEndScreen) {
+          // If user swiped to a new question, update previouslyAnswered for the question they left
+          if (newIndex !== currentIndex && currentIndex >= 0 && currentIndex < filteredQuestions.length) {
+            const previousQuestionId = filteredQuestions[currentIndex]?.id;
+            if (previousQuestionId && answeredQuestions.has(previousQuestionId)) {
+              debug('feed', 'User swiped away from answered question - updating previouslyAnswered:', previousQuestionId);
+              // Now it's safe to update previouslyAnswered since user has moved away
+              setPreviouslyAnswered((prev) => {
+                const next = new Set([...prev, previousQuestionId]);
+                debug('feed', 'Updated previouslyAnswered after swipe:', {
+                  previousSize: prev.size,
+                  newSize: next.size,
+                  questionId: previousQuestionId,
+                });
+                return next;
+              });
             }
+          }
+
+          // Check if user swiped past without answering (skipped)
+          if (
+            newIndex > currentIndex &&
+            currentIndex >= 0 &&
+            currentIndex < filteredQuestions.length &&
+            !answeredQuestions.has(filteredQuestions[currentIndex]?.id)
+          ) {
+            const skippedQ = filteredQuestions[currentIndex];
+            debug('feed', 'Question skipped:', skippedQ?.id);
+            setSkippedQuestions((prev) =>
+              new Set([...prev, skippedQ?.id])
+            );
             
-            // Update historical tracking
-            setPreviouslySkipped((prev) => new Set([...prev, skippedQ.id]));
-            
-            // Record skip in Firestore
-            if (user?.uid && skippedQ.id) {
-              recordSkippedQuestion(user.uid, skippedQ.id);
+            // Show skip notification and save to Firestore
+            if (skippedQ) {
+              showSkipNotification(skippedQ.topic);
+              if (hapticFeedback) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+              }
+              
+              // Update historical tracking
+              setPreviouslySkipped((prev) => new Set([...prev, skippedQ.id]));
+              
+              // Record skip in Firestore
+              if (user?.uid && skippedQ.id) {
+                recordSkippedQuestion(user.uid, skippedQ.id);
+              }
             }
           }
         }
 
-        setCurrentIndex(newIndex);
-        if (hapticFeedback) {
-          Haptics.selectionAsync();
+        if (newIndex !== currentIndex) {
+          debug('feed', 'Updating currentIndex:', { from: currentIndex, to: newIndex, isEndScreen });
+          setCurrentIndex(newIndex);
+          if (hapticFeedback && !isEndScreen) {
+            Haptics.selectionAsync();
+          }
         }
       }
     },
-    [currentIndex, answeredQuestions, filteredQuestions, showSkipNotification, hapticFeedback]
+    [currentIndex, answeredQuestions, filteredQuestions, showSkipNotification, hapticFeedback, user?.uid]
   );
 
   const viewabilityConfig = useRef({
@@ -432,26 +533,133 @@ export default function QuestionFeed() {
     router.push('/settings');
   };
 
-  // Render question card
+  // Create data array with end screen
+  type ListItem = Question | { id: '__END__'; type: 'end' };
+  
+  const listData = useMemo(() => {
+    // Add a special "end" marker as the last item
+    const endMarker: ListItem = { id: '__END__', type: 'end' };
+    return [...filteredQuestions, endMarker];
+  }, [filteredQuestions]);
+
+  // Render question card or end screen
   const renderQuestion = useCallback(
-    ({ item, index }: { item: Question; index: number }) => (
-      <QuestionCard
-        question={item}
-        onAnswer={handleAnswer}
-        isActive={index === currentIndex}
-        wasSkipped={skippedQuestions.has(item.id) || previouslySkipped.has(item.id)}
-        wasWrong={wrongQuestions.has(item.id) || previouslyWrong.has(item.id)}
-        showExplanations={showExplanations}
-        wasAnswered={previouslyAnswered.has(item.id) || answeredQuestions.has(item.id)}
-        wasAnsweredCorrectly={previouslyCorrect.has(item.id)}
-        hapticFeedback={hapticFeedback}
-      />
-    ),
-    [currentIndex, handleAnswer, skippedQuestions, wrongQuestions, answeredQuestions, showExplanations, previouslyAnswered, previouslyCorrect, previouslyWrong, previouslySkipped, hapticFeedback]
+    ({ item, index }: { item: ListItem; index: number }) => {
+      // Render end screen if this is the last item
+      if ('type' in item && item.type === 'end') {
+        const isLastQuestion = index === filteredQuestions.length;
+        debug('feed', 'Rendering end screen:', {
+          index,
+          filteredQuestionsLength: filteredQuestions.length,
+          isLastQuestion,
+          hasMore,
+        });
+        
+        return (
+          <View style={styles.endScreenContainer}>
+            <Animated.View entering={FadeInUp.duration(400)} style={styles.endScreenContent}>
+              <Ionicons name="checkmark-circle" size={40} color={colors.primary} style={styles.endScreenIcon} />
+              <Text style={styles.endScreenTitle}>End of Questions</Text>
+              <Text style={styles.endScreenSubtitle}>
+                Swipe up to review previous questions
+              </Text>
+              
+              <View style={styles.endScreenActions}>
+                {hasMore && (
+                  <Pressable
+                    style={styles.endScreenButton}
+                    onPress={async () => {
+                      debug('feed', 'Load more button pressed');
+                      if (hapticFeedback) {
+                        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      }
+                      await loadMore();
+                      // Scroll back to show new questions
+                      if (flatListRef.current && filteredQuestions.length > 0) {
+                        setTimeout(() => {
+                          flatListRef.current?.scrollToIndex({
+                            index: filteredQuestions.length - 1,
+                            animated: true,
+                          });
+                        }, 300);
+                      }
+                    }}
+                    disabled={isLoadingMore}
+                  >
+                    {isLoadingMore ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <>
+                        <Ionicons name="refresh" size={16} color={colors.primary} />
+                        <Text style={styles.endScreenButtonText}>Load More</Text>
+                      </>
+                    )}
+                  </Pressable>
+                )}
+                
+                <Pressable
+                  style={styles.endScreenButton}
+                  onPress={async () => {
+                    debug('feed', 'Back to top button pressed');
+                    if (hapticFeedback) {
+                      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    flatListRef.current?.scrollToIndex({
+                      index: 0,
+                      animated: true,
+                    });
+                  }}
+                >
+                  <Ionicons name="arrow-up" size={16} color={colors.textSecondary} />
+                  <Text style={styles.endScreenButtonText}>Back to First</Text>
+                </Pressable>
+                
+                <Pressable
+                  style={styles.endScreenButton}
+                  onPress={async () => {
+                    debug('feed', 'Adjust filters button pressed');
+                    if (hapticFeedback) {
+                      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    router.push('/settings');
+                  }}
+                >
+                  <Ionicons name="options-outline" size={16} color={colors.textSecondary} />
+                  <Text style={styles.endScreenButtonText}>Adjust Filters</Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+          </View>
+        );
+      }
+      
+      // Render normal question card
+      const question = item as Question;
+      return (
+        <QuestionCard
+          question={question}
+          onAnswer={handleAnswer}
+          isActive={index === currentIndex}
+          wasSkipped={skippedQuestions.has(question.id) || previouslySkipped.has(question.id)}
+          wasWrong={wrongQuestions.has(question.id) || previouslyWrong.has(question.id)}
+          showExplanations={showExplanations}
+          wasAnswered={previouslyAnswered.has(question.id) || answeredQuestions.has(question.id)}
+          wasAnsweredCorrectly={previouslyCorrect.has(question.id)}
+          hapticFeedback={hapticFeedback}
+        />
+      );
+    },
+    [currentIndex, handleAnswer, skippedQuestions, wrongQuestions, answeredQuestions, showExplanations, previouslyAnswered, previouslyCorrect, previouslyWrong, previouslySkipped, hapticFeedback, filteredQuestions, hasMore, loadMore, isLoadingMore]
   );
 
   const keyExtractor = useCallback(
-    (item: Question, index: number) => `${item.id}-${index}`,
+    (item: ListItem, index: number) => {
+      if ('type' in item && item.type === 'end') {
+        return '__END__';
+      }
+      const question = item as Question;
+      return `${question.id}-${index}`;
+    },
     []
   );
 
@@ -686,7 +894,7 @@ export default function QuestionFeed() {
       {!isLoading && filteredQuestions.length > 0 && (
         <FlatList
         ref={flatListRef}
-        data={filteredQuestions}
+        data={listData}
         renderItem={renderQuestion}
         keyExtractor={keyExtractor}
         pagingEnabled
@@ -704,7 +912,22 @@ export default function QuestionFeed() {
         initialNumToRender={2}
         maxToRenderPerBatch={3}
         windowSize={5}
-        removeClippedSubviews
+        removeClippedSubviews={false}
+        maintainVisibleContentPosition={
+          listData.length > 0
+            ? {
+                minIndexForVisible: 0,
+              }
+            : undefined
+        }
+        onScrollToIndexFailed={(info) => {
+          // Handle scroll to index failures gracefully
+          debug('feed', 'Scroll to index failed:', info);
+          const wait = new Promise(resolve => setTimeout(resolve, 500));
+          wait.then(() => {
+            flatListRef.current?.scrollToIndex({ index: info.index, animated: false });
+          });
+        }}
       />
       )}
 
@@ -1158,5 +1381,59 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textInverse,
     letterSpacing: 0.5,
+  },
+  
+  // End Screen - Minimalist Design
+  endScreenContainer: {
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  endScreenContent: {
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 320,
+  },
+  endScreenIcon: {
+    marginBottom: spacing.lg,
+  },
+  endScreenTitle: {
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    textAlign: 'center',
+    marginBottom: spacing.xs,
+  },
+  endScreenSubtitle: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: '400',
+    color: colors.textMuted,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+    lineHeight: 20,
+  },
+  endScreenActions: {
+    width: '100%',
+    gap: spacing.sm,
+    alignItems: 'stretch',
+  },
+  endScreenButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    backgroundColor: 'transparent',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  endScreenButtonText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: '500',
+    color: colors.textSecondary,
   },
 });

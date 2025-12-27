@@ -6,8 +6,11 @@ admin
 .expo/
 dist/
 web-build/
-
+*.plist
 # Native builds
+.env.example
+.firebase/
+.npmrc
 *.jks
 *.p8
 *.p12
@@ -16,7 +19,8 @@ web-build/
 *.orig.*
 android/
 ios/
-
+ios-build.log
+android-build.log
 # Environment variables
 .env
 env
@@ -29,7 +33,7 @@ env
 **/firebase-adminsdk-*.json
 **/*-firebase-adminsdk-*.json
 functions/*-firebase-adminsdk-*.json
-
+google-services.json
 # Metro
 .metro-health-check*
 

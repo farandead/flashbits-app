@@ -15,7 +15,7 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
-import { getUserProfile, UserProfile, updateUserProfile } from '@/services/userService';
+import { getUserProfile, UserProfile, updateUserProfile, ValidationError } from '@/services/userService';
 import { getUserStats, UserStats, getFormattedTopicProgress } from '@/services/statsService';
 import { topicColors } from '@/data/questions';
 import SignInRequired from '@/components/SignInRequired';
@@ -209,7 +209,13 @@ export default function ProgressScreen() {
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
       console.error('Error saving goals:', error);
-      Alert.alert('Error', 'Failed to save changes. Please try again.');
+      
+      // Show user-friendly error message for validation errors
+      if (error instanceof ValidationError) {
+        Alert.alert('Validation Error', error.message || 'Invalid goals. Please check and try again.');
+      } else {
+        Alert.alert('Error', 'Failed to save changes. Please try again.');
+      }
     } finally {
       setIsSaving(false);
     }

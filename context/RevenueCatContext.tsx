@@ -20,23 +20,7 @@ import {
   type PurchasesPackage,
 } from '@/services/revenueCatService';
 import { useAuth } from './AuthContext';
-
-// Use console for RevenueCat logging
-const log = (message: string, ...args: any[]) => {
-  if (__DEV__) {
-    console.log(`[RevenueCat Context] ${message}`, ...args);
-  }
-};
-
-const logSuccess = (message: string, ...args: any[]) => {
-  if (__DEV__) {
-    console.log(`✅ [RevenueCat Context] ${message}`, ...args);
-  }
-};
-
-const logError = (message: string, ...args: any[]) => {
-  console.error(`❌ [RevenueCat Context] ${message}`, ...args);
-};
+import { debug, debugError, debugSuccess } from '@/utils/debug';
 
 interface RevenueCatContextType {
   // State
@@ -80,10 +64,15 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
 
   // Initialize RevenueCat on mount
   useEffect(() => {
+    let customerInfoListener: (() => void) | null = null;
+    let isMounted = true;
+    
     const init = async () => {
       try {
-        log('Initializing RevenueCat context...');
+        debug('revenueCat', 'Initializing RevenueCat context...');
         const initialized = await initializeRevenueCat();
+        if (!isMounted) return;
+        
         setIsInitialized(initialized);
         
         if (initialized) {
@@ -91,10 +80,15 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
             await refreshOfferings();
             await refreshCustomerInfo();
             
+            if (!isMounted) return;
+            
             // Set up listener for automatic updates when purchases change
             // This ensures UI updates immediately when RevenueCat detects purchase changes
-            Purchases.addCustomerInfoUpdateListener(async (customerInfo) => {
-              log('Customer info updated via listener - refreshing state');
+            // Note: addCustomerInfoUpdateListener returns an unsubscribe function
+            const unsubscribe = Purchases.addCustomerInfoUpdateListener(async (customerInfo) => {
+              if (!isMounted) return;
+              
+              debug('revenueCat', 'Customer info updated via listener - refreshing state');
               setCustomerInfo(customerInfo);
               
               const entitled = await hasActiveEntitlement();
@@ -103,23 +97,41 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
               const status = await getSubscriptionStatus();
               setSubscriptionStatus(status);
               
-              log(`Pro status updated via listener: ${entitled}`);
-            });
+              debug('revenueCat', `Pro status updated via listener: ${entitled}`);
+            }) as (() => void) | undefined;
+            
+            // Store the unsubscribe function (if it exists)
+            if (unsubscribe) {
+              customerInfoListener = unsubscribe;
+            }
           } catch (error) {
-            logError('Failed to refresh RevenueCat data:', error);
+            debugError('revenueCat', 'Failed to refresh RevenueCat data:', error);
             // Don't crash - app can still work without RevenueCat data
           }
         }
       } catch (error) {
-        logError('Failed to initialize RevenueCat context:', error);
+        debugError('revenueCat', 'Failed to initialize RevenueCat context:', error);
         // Set initialized to false and loading to false so app can continue
-        setIsInitialized(false);
+        if (isMounted) {
+          setIsInitialized(false);
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
     init();
+    
+    // Cleanup: Remove customer info listener on unmount
+    return () => {
+      isMounted = false;
+      if (customerInfoListener) {
+        customerInfoListener();
+        debug('revenueCat', 'Customer info listener cleaned up');
+      }
+    };
   }, []);
 
   // Sync with Firebase Auth when user changes
@@ -132,7 +144,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
           await syncWithFirebaseAuth();
           await refreshCustomerInfo();
         } catch (error) {
-          logError('Failed to sync with Firebase Auth:', error);
+          debugError('revenueCat', 'Failed to sync with Firebase Auth:', error);
         }
       } else {
         // User logged out, log out from RevenueCat
@@ -142,7 +154,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
           setCustomerInfo(null);
           setSubscriptionStatus(null);
         } catch (error) {
-          logError('Failed to log out from RevenueCat:', error);
+          debugError('revenueCat', 'Failed to log out from RevenueCat:', error);
         }
       }
     };
@@ -164,7 +176,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         const status = await getSubscriptionStatus();
         setSubscriptionStatus(status);
         
-        log(`Pro status: ${entitled}`);
+        debug('revenueCat', `Pro status: ${entitled}`);
         
         // Sync to Firestore whenever customer info is refreshed
         await syncSubscriptionToFirestore();
@@ -173,7 +185,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         setSubscriptionStatus(null);
       }
     } catch (error) {
-      logError('Failed to refresh customer info:', error);
+      debugError('revenueCat', 'Failed to refresh customer info:', error);
       setIsPro(false);
     } finally {
       setIsLoading(false);
@@ -187,7 +199,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
       setIsPro(entitled);
       return entitled;
     } catch (error) {
-        logError('Failed to check entitlement:', error);
+      debugError('revenueCat', 'Failed to check entitlement:', error);
       return false;
     }
   };
@@ -198,7 +210,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
       const offering = await getOfferings();
       setCurrentOffering(offering);
     } catch (error) {
-        logError('Failed to refresh offerings:', error);
+        debugError('revenueCat', 'Failed to refresh offerings:', error);
     }
   };
 
@@ -221,29 +233,29 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         const entitlement = customerInfo.entitlements.active[ENTITLEMENT_ID];
         const entitled = entitlement !== undefined;
         
-        log(`Purchase completed - Checking entitlement directly from purchase result`);
-        log(`Looking for entitlement: "${ENTITLEMENT_ID}"`);
-        log(`All active entitlements: ${JSON.stringify(Object.keys(customerInfo.entitlements.active))}`);
-        log(`All entitlements (active + all): ${JSON.stringify(Object.keys(customerInfo.entitlements.all))}`);
-        log(`Active subscriptions: ${JSON.stringify(customerInfo.activeSubscriptions)}`);
-        log(`Entitlement found: ${entitled}`);
+        debug('revenueCat', `Purchase completed - Checking entitlement directly from purchase result`);
+        debug('revenueCat', `Looking for entitlement: "${ENTITLEMENT_ID}"`);
+        debug('revenueCat', `All active entitlements: ${JSON.stringify(Object.keys(customerInfo.entitlements.active))}`);
+        debug('revenueCat', `All entitlements (active + all): ${JSON.stringify(Object.keys(customerInfo.entitlements.all))}`);
+        debug('revenueCat', `Active subscriptions: ${JSON.stringify(customerInfo.activeSubscriptions)}`);
+        debug('revenueCat', `Entitlement found: ${entitled}`);
         
         if (entitlement) {
-          log(`Entitlement details: ${JSON.stringify({
+          debug('revenueCat', `Entitlement details: ${JSON.stringify({
             identifier: entitlement.identifier,
             productIdentifier: entitlement.productIdentifier,
             expirationDate: entitlement.expirationDate,
             willRenew: entitlement.willRenew
           })}`);
         } else {
-          logError(`❌ Entitlement "${ENTITLEMENT_ID}" NOT FOUND in active entitlements!`);
-          logError(`This means the product is not linked to the entitlement in RevenueCat dashboard.`);
-          logError(`Please check RevenueCat Dashboard → Entitlements → "${ENTITLEMENT_ID}" → Attach product "${customerInfo.activeSubscriptions[0] || 'N/A'}"`);
+          debugError('revenueCat', `❌ Entitlement "${ENTITLEMENT_ID}" NOT FOUND in active entitlements!`);
+          debugError('revenueCat', `This means the product is not linked to the entitlement in RevenueCat dashboard.`);
+          debugError('revenueCat', `Please check RevenueCat Dashboard → Entitlements → "${ENTITLEMENT_ID}" → Attach product "${customerInfo.activeSubscriptions[0] || 'N/A'}"`);
         }
         
         // Update pro status immediately
         setIsPro(entitled);
-        log(`Pro status set to: ${entitled}`);
+        debug('revenueCat', `Pro status set to: ${entitled}`);
         
         // Get subscription status from the customer info
         if (entitlement) {
@@ -270,7 +282,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         // Force a refresh to ensure everything is in sync (but state is already updated)
         await refreshCustomerInfo();
         
-        logSuccess('Purchase successful - Pro status updated immediately');
+        debugSuccess('revenueCat', 'Purchase successful - Pro status updated immediately');
       }
       
       return {
@@ -278,7 +290,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         error: result.error,
       };
     } catch (error: any) {
-        logError('Purchase error:', error);
+        debugError('revenueCat', 'Purchase error:', error);
       return {
         success: false,
         error: error.message || 'Purchase failed',
@@ -305,8 +317,8 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         const entitlement = restoredCustomerInfo.entitlements.active[ENTITLEMENT_ID];
         const entitled = entitlement !== undefined;
         
-        log(`Restore completed - Checking entitlement directly from restore result`);
-        log(`Entitlement found: ${entitled}`);
+        debug('revenueCat', `Restore completed - Checking entitlement directly from restore result`);
+        debug('revenueCat', `Entitlement found: ${entitled}`);
         
         // Update pro status immediately
         setIsPro(entitled);
@@ -333,7 +345,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         // Sync to Firestore
         await syncSubscriptionToFirestore();
         
-        logSuccess('Purchases restored successfully - Pro status updated immediately');
+        debugSuccess('revenueCat', 'Purchases restored successfully - Pro status updated immediately');
       }
       
       return {
@@ -341,7 +353,7 @@ export const RevenueCatProvider: React.FC<RevenueCatProviderProps> = ({ children
         error: result.error,
       };
     } catch (error: any) {
-        logError('Restore error:', error);
+        debugError('revenueCat', 'Restore error:', error);
       return {
         success: false,
         error: error.message || 'Failed to restore purchases',

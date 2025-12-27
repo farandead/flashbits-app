@@ -18,9 +18,11 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { Question, Topic, Difficulty, QuestionCategory, questions as mockQuestions } from '@/data/questions';
+import { generateCacheKey, getCachedData, setCachedData, clearCacheByPrefix } from './cacheService';
 
 const QUESTIONS_COLLECTION = 'questions';
 const DEFAULT_PAGE_SIZE = 50; // Number of questions to fetch per batch
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
 
 // Convert Firestore document to Question type
 const convertDocToQuestion = (doc: QueryDocumentSnapshot<DocumentData>): Question => {
@@ -55,12 +57,42 @@ export interface PaginatedQuestionsResult {
   hasMore: boolean;
 }
 
+// Cacheable pagination result (without Firestore document references)
+interface CacheablePaginatedResult {
+  questions: Question[];
+  lastDocId: string | null;
+  hasMore: boolean;
+}
+
 // Fetch all questions with pagination (excludes hidden questions)
 export const fetchAllQuestions = async (
   pageSize: number = DEFAULT_PAGE_SIZE,
   lastDocument?: QueryDocumentSnapshot<DocumentData>
 ): Promise<PaginatedQuestionsResult> => {
   try {
+    // Generate cache key based on pageSize and lastDocument ID
+    const lastDocId = lastDocument?.id || 'first';
+    const cacheKey = generateCacheKey('questions:all', {
+      pageSize,
+      lastDocId,
+    });
+    
+    // Try to get from cache first (only for first page to avoid pagination complexity)
+    if (!lastDocument) {
+      const cached = await getCachedData<CacheablePaginatedResult>(cacheKey, CACHE_TTL);
+      if (cached && cached.questions.length > 0) {
+        // For cached data, we need to reconstruct lastDoc if we have lastDocId
+        // Since we can't easily reconstruct QueryDocumentSnapshot, we'll return cached questions
+        // but mark that we can't use it for pagination
+        // This is a trade-off: we get fast first-page loads, but subsequent pages need fresh queries
+        return {
+          questions: cached.questions,
+          lastDoc: null, // Can't reconstruct, so pagination will start fresh
+          hasMore: cached.hasMore,
+        };
+      }
+    }
+    
     const questionsRef = collection(db, QUESTIONS_COLLECTION);
     
     // Build query with pagination
@@ -79,11 +111,22 @@ export const fetchAllQuestions = async (
     
     if (snapshot.empty) {
       // If no questions in Firebase, return empty with mock data fallback handled by caller
-      return {
+      const result = {
         questions: [],
         lastDoc: null,
         hasMore: false,
       };
+      
+      // Cache empty result (only for first page)
+      if (!lastDocument) {
+        await setCachedData<CacheablePaginatedResult>(cacheKey, {
+          questions: [],
+          lastDocId: null,
+          hasMore: false,
+        }, CACHE_TTL);
+      }
+      
+      return result;
     }
     
     // Filter out hidden questions
@@ -96,11 +139,22 @@ export const fetchAllQuestions = async (
     // Check if there are more documents (if we got a full page, there might be more)
     const hasMore = snapshot.docs.length === pageSize;
     
-    return {
+    const result = {
       questions,
       lastDoc,
       hasMore,
     };
+    
+    // Cache the result (only for first page to avoid complexity with pagination cursors)
+    if (!lastDocument) {
+      await setCachedData<CacheablePaginatedResult>(cacheKey, {
+        questions,
+        lastDocId: lastDoc?.id || null,
+        hasMore,
+      }, CACHE_TTL);
+    }
+    
+    return result;
   } catch (error) {
     console.error('Error fetching questions:', error);
     // Return empty result on error - caller should handle fallback
@@ -186,6 +240,19 @@ export const fetchQuestionsWithFilters = async (
   category?: QuestionCategory | 'all'
 ): Promise<Question[]> => {
   try {
+    // Generate cache key based on filters
+    const cacheKey = generateCacheKey('questions:filters', {
+      topics: topics?.sort().join(','),
+      difficulties: difficulties?.sort().join(','),
+      category,
+    });
+    
+    // Try to get from cache first
+    const cached = await getCachedData<Question[]>(cacheKey, CACHE_TTL);
+    if (cached) {
+      return cached;
+    }
+    
     const questionsRef = collection(db, QUESTIONS_COLLECTION);
     
     // Build query with Firestore where clauses for server-side filtering
@@ -261,6 +328,9 @@ export const fetchQuestionsWithFilters = async (
       questions = questions.filter(q => difficulties.includes(q.difficulty));
     }
     
+    // Cache the result
+    await setCachedData<Question[]>(cacheKey, questions, CACHE_TTL);
+    
     return questions;
   } catch (error: any) {
     // If index error, fall back to client-side filtering
@@ -334,6 +404,28 @@ export const fetchQuestionsWithFiltersPaginated = async (
   lastDocument?: QueryDocumentSnapshot<DocumentData>
 ): Promise<PaginatedQuestionsResult> => {
   try {
+    // Generate cache key based on filters, pageSize, and lastDocument ID
+    const lastDocId = lastDocument?.id || 'first';
+    const cacheKey = generateCacheKey('questions:filters:paginated', {
+      topics: topics?.sort().join(','),
+      difficulties: difficulties?.sort().join(','),
+      category,
+      pageSize,
+      lastDocId,
+    });
+    
+    // Try to get from cache first (only for first page)
+    if (!lastDocument) {
+      const cached = await getCachedData<CacheablePaginatedResult>(cacheKey, CACHE_TTL);
+      if (cached && cached.questions.length > 0) {
+        return {
+          questions: cached.questions,
+          lastDoc: null, // Can't reconstruct, so pagination will start fresh
+          hasMore: cached.hasMore,
+        };
+      }
+    }
+    
     const questionsRef = collection(db, QUESTIONS_COLLECTION);
     
     // Build query with Firestore where clauses for server-side filtering
@@ -418,11 +510,22 @@ export const fetchQuestionsWithFiltersPaginated = async (
     // If we got a full batch and have questions, there might be more
     const hasMore = snapshot.docs.length === fetchLimit && questions.length > 0;
     
-    return {
+    const result = {
       questions,
       lastDoc,
       hasMore,
     };
+    
+    // Cache the result (only for first page)
+    if (!lastDocument) {
+      await setCachedData<CacheablePaginatedResult>(cacheKey, {
+        questions,
+        lastDocId: lastDoc?.id || null,
+        hasMore,
+      }, CACHE_TTL);
+    }
+    
+    return result;
   } catch (error: any) {
     // If index error, fall back to fetching all and filtering client-side
     if (error?.code === 'failed-precondition' || error?.message?.includes('index')) {
@@ -492,15 +595,35 @@ export const fetchQuestionsWithFiltersPaginated = async (
 // Fetch a single question by ID
 export const fetchQuestionById = async (questionId: string): Promise<Question | null> => {
   try {
+    // Generate cache key based on question ID
+    const cacheKey = generateCacheKey('question:id', { questionId });
+    
+    // Try to get from cache first
+    const cached = await getCachedData<Question>(cacheKey, CACHE_TTL);
+    if (cached) {
+      return cached;
+    }
+    
     const docRef = doc(db, QUESTIONS_COLLECTION, questionId);
     const docSnap = await getDoc(docRef);
     
     if (docSnap.exists()) {
-      return convertDocToQuestion(docSnap as QueryDocumentSnapshot<DocumentData>);
+      const question = convertDocToQuestion(docSnap as QueryDocumentSnapshot<DocumentData>);
+      
+      // Cache the result
+      await setCachedData<Question>(cacheKey, question, CACHE_TTL);
+      
+      return question;
     }
     
     // Fallback to mock data
-    return mockQuestions.find(q => q.id === questionId) || null;
+    const mockQuestion = mockQuestions.find(q => q.id === questionId) || null;
+    if (mockQuestion) {
+      // Cache mock question too
+      await setCachedData<Question>(cacheKey, mockQuestion, CACHE_TTL);
+    }
+    
+    return mockQuestion;
   } catch (error) {
     console.error('Error fetching question:', error);
     return mockQuestions.find(q => q.id === questionId) || null;
@@ -515,6 +638,10 @@ export const addQuestion = async (question: Omit<Question, 'id'>): Promise<strin
       ...question,
       createdAt: new Date().toISOString(),
     });
+    
+    // Invalidate cache when a new question is added
+    await clearCacheByPrefix('questions');
+    
     return docRef.id;
   } catch (error) {
     console.error('Error adding question:', error);
@@ -533,6 +660,9 @@ export const updateQuestion = async (
       ...updates,
       updatedAt: new Date().toISOString(),
     });
+    
+    // Invalidate cache when a question is updated
+    await clearCacheByPrefix('questions');
   } catch (error) {
     console.error('Error updating question:', error);
     throw error;
@@ -544,6 +674,9 @@ export const deleteQuestion = async (questionId: string): Promise<void> => {
   try {
     const docRef = doc(db, QUESTIONS_COLLECTION, questionId);
     await deleteDoc(docRef);
+    
+    // Invalidate cache when a question is deleted
+    await clearCacheByPrefix('questions');
   } catch (error) {
     console.error('Error deleting question:', error);
     throw error;

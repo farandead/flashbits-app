@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -77,6 +77,7 @@ const Paywall: React.FC<PaywallProps> = ({
   } = useRevenueCat();
   
   const [selectedPlan, setSelectedPlan] = useState<'monthly' | 'yearly'>('monthly');
+  const alertTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [packages, setPackages] = useState<PurchasesPackageType[]>([]);
   const [isPurchasing, setIsPurchasing] = useState(false);
 
@@ -95,6 +96,15 @@ const Paywall: React.FC<PaywallProps> = ({
       }
     }
   }, [visible, currentOffering]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (alertTimeoutRef.current) {
+        clearTimeout(alertTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Present RevenueCat's built-in paywall
   const presentRevenueCatPaywall = async () => {
@@ -157,12 +167,18 @@ const Paywall: React.FC<PaywallProps> = ({
         onClose();
         
         // Show success message after closing (non-blocking)
-        setTimeout(() => {
+        // Clear any existing timeout first
+        if (alertTimeoutRef.current) {
+          clearTimeout(alertTimeoutRef.current);
+        }
+        
+        alertTimeoutRef.current = setTimeout(() => {
           Alert.alert(
             'Success!',
             'Your subscription is now active. Enjoy Pro features!',
             [{ text: 'OK' }]
           );
+          alertTimeoutRef.current = null;
         }, 300);
       } else {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
