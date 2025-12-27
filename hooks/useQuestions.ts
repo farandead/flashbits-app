@@ -1,9 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Question, Topic, Difficulty, Company, QuestionCategory, questions as mockQuestions } from '@/data/questions';
 import {
   fetchAllQuestions,
+  fetchAllQuestionsLegacy,
   fetchQuestionsWithFilters,
+  fetchQuestionsWithFiltersPaginated,
+  type PaginatedQuestionsResult,
 } from '@/services/questionsService';
+import type { QueryDocumentSnapshot } from 'firebase/firestore';
 
 interface UseQuestionsOptions {
   topics?: Topic[];
@@ -11,6 +15,8 @@ interface UseQuestionsOptions {
   companies?: Company[];
   category?: QuestionCategory | 'all';
   shuffle?: boolean;
+  usePagination?: boolean; // Enable pagination
+  pageSize?: number; // Questions per page (default: 50)
 }
 
 interface UseQuestionsReturn {
@@ -18,14 +24,36 @@ interface UseQuestionsReturn {
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
+  loadMore: () => Promise<void>; // Load next page
+  hasMore: boolean; // Whether more questions are available
+  isLoadingMore: boolean; // Loading state for pagination
 }
 
 export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsReturn => {
-  const { topics, difficulties, companies, category, shuffle = true } = options;
+  const { 
+    topics, 
+    difficulties, 
+    companies, 
+    category, 
+    shuffle = true,
+    usePagination = true, // Enable pagination by default
+    pageSize = 50
+  } = options;
   
   const [questions, setQuestions] = useState<Question[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  
+  // Use ref to track lastDoc to avoid dependency issues
+  const lastDocRef = useRef<QueryDocumentSnapshot | null>(null);
+  
+  // Sync ref with state
+  useEffect(() => {
+    lastDocRef.current = lastDoc;
+  }, [lastDoc]);
 
   const shuffleArray = <T,>(array: T[]): T[] => {
     const shuffled = [...array];
@@ -53,45 +81,124 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
     });
   };
 
-  const fetchQuestions = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
+  const fetchQuestions = useCallback(async (isLoadMore: boolean = false) => {
+    if (isLoadMore) {
+      setIsLoadingMore(true);
+    } else {
+      setIsLoading(true);
+      setError(null);
+      setQuestions([]);
+      setLastDoc(null);
+      lastDocRef.current = null;
+    }
     
     try {
-      let fetchedQuestions: Question[];
+      let result: PaginatedQuestionsResult | { questions: Question[] };
       
-      // If filters are provided, use filtered fetch
-      if ((topics && topics.length > 0) || (difficulties && difficulties.length > 0) || (category && category !== 'all')) {
-        fetchedQuestions = await fetchQuestionsWithFilters(topics, difficulties, category);
-      } else {
-        fetchedQuestions = await fetchAllQuestions();
-      }
-      
-      // Fallback to mock if empty
-      if (fetchedQuestions.length === 0) {
-        fetchedQuestions = mockQuestions;
+      // Use pagination if enabled
+      if (usePagination) {
+        // Get lastDoc from ref to avoid dependency issues
+        const currentLastDoc = isLoadMore ? lastDocRef.current || undefined : undefined;
         
-        // Apply filters to mock data
-        if (topics && topics.length > 0) {
-          fetchedQuestions = fetchedQuestions.filter(q => topics.includes(q.topic));
+        // If filters are provided, use filtered paginated fetch
+        if ((topics && topics.length > 0) || (difficulties && difficulties.length > 0) || (category && category !== 'all')) {
+          result = await fetchQuestionsWithFiltersPaginated(
+            topics, 
+            difficulties, 
+            category, 
+            pageSize,
+            currentLastDoc
+          );
+        } else {
+          result = await fetchAllQuestions(
+            pageSize,
+            currentLastDoc
+          );
         }
-        if (difficulties && difficulties.length > 0) {
-          fetchedQuestions = fetchedQuestions.filter(q => difficulties.includes(q.difficulty));
+        
+        // Handle pagination result
+        if ('lastDoc' in result) {
+          const paginatedResult = result as PaginatedQuestionsResult;
+          
+          if (isLoadMore) {
+            setQuestions(prev => [...prev, ...paginatedResult.questions]);
+          } else {
+            setQuestions(paginatedResult.questions);
+          }
+          
+          setLastDoc(paginatedResult.lastDoc);
+          lastDocRef.current = paginatedResult.lastDoc;
+          setHasMore(paginatedResult.hasMore);
+          
+          // If no questions from Firestore, fallback to mock
+          if (paginatedResult.questions.length === 0 && !isLoadMore) {
+            let fallbackQuestions = mockQuestions;
+            if (topics && topics.length > 0) {
+              fallbackQuestions = fallbackQuestions.filter(q => topics.includes(q.topic));
+            }
+            if (difficulties && difficulties.length > 0) {
+              fallbackQuestions = fallbackQuestions.filter(q => difficulties.includes(q.difficulty));
+            }
+            if (category && category !== 'all') {
+              fallbackQuestions = fallbackQuestions.filter(q => (q.category || 'general') === category);
+            }
+            fallbackQuestions = applyCompanyFilter(fallbackQuestions);
+            if (shuffle) {
+              fallbackQuestions = shuffleArray(fallbackQuestions);
+            }
+            setQuestions(fallbackQuestions);
+            setHasMore(false);
+          } else {
+            // Apply company filter and shuffle to fetched questions
+            let processedQuestions = isLoadMore ? result.questions : result.questions;
+            processedQuestions = applyCompanyFilter(processedQuestions);
+            if (shuffle && !isLoadMore) {
+              processedQuestions = shuffleArray(processedQuestions);
+            }
+            
+            if (isLoadMore) {
+              setQuestions(prev => {
+                const combined = [...prev, ...processedQuestions];
+                return shuffle ? shuffleArray(combined) : combined;
+              });
+            } else {
+              setQuestions(processedQuestions);
+            }
+          }
         }
-        if (category && category !== 'all') {
-          fetchedQuestions = fetchedQuestions.filter(q => (q.category || 'general') === category);
+      } else {
+        // Legacy non-paginated approach
+        let fetchedQuestions: Question[];
+        
+        if ((topics && topics.length > 0) || (difficulties && difficulties.length > 0) || (category && category !== 'all')) {
+          fetchedQuestions = await fetchQuestionsWithFilters(topics, difficulties, category);
+        } else {
+          fetchedQuestions = await fetchAllQuestionsLegacy();
         }
+        
+        // Fallback to mock if empty
+        if (fetchedQuestions.length === 0) {
+          fetchedQuestions = mockQuestions;
+          
+          if (topics && topics.length > 0) {
+            fetchedQuestions = fetchedQuestions.filter(q => topics.includes(q.topic));
+          }
+          if (difficulties && difficulties.length > 0) {
+            fetchedQuestions = fetchedQuestions.filter(q => difficulties.includes(q.difficulty));
+          }
+          if (category && category !== 'all') {
+            fetchedQuestions = fetchedQuestions.filter(q => (q.category || 'general') === category);
+          }
+        }
+        
+        fetchedQuestions = applyCompanyFilter(fetchedQuestions);
+        if (shuffle) {
+          fetchedQuestions = shuffleArray(fetchedQuestions);
+        }
+        
+        setQuestions(fetchedQuestions);
+        setHasMore(false);
       }
-      
-      // Apply company filter (works on both Firestore and mock data)
-      fetchedQuestions = applyCompanyFilter(fetchedQuestions);
-      
-      // Shuffle if requested
-      if (shuffle) {
-        fetchedQuestions = shuffleArray(fetchedQuestions);
-      }
-      
-      setQuestions(fetchedQuestions);
     } catch (err) {
       console.error('Error in useQuestions:', err);
       setError('Failed to load questions');
@@ -112,10 +219,19 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
         fallbackQuestions = shuffleArray(fallbackQuestions);
       }
       setQuestions(fallbackQuestions);
+      setHasMore(false);
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
-  }, [topics, difficulties, companies, category, shuffle]);
+  }, [topics, difficulties, companies, category, shuffle, usePagination, pageSize]);
+  
+  const loadMore = useCallback(async () => {
+    if (!hasMore || isLoadingMore || isLoading) {
+      return;
+    }
+    await fetchQuestions(true);
+  }, [hasMore, isLoadingMore, isLoading, fetchQuestions]);
 
   useEffect(() => {
     fetchQuestions();
@@ -125,13 +241,16 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
     questions,
     isLoading,
     error,
-    refetch: fetchQuestions,
+    refetch: () => fetchQuestions(false),
+    loadMore,
+    hasMore,
+    isLoadingMore,
   };
 };
 
 // Hook for infinite feed (repeats questions for continuous scrolling)
 export const useInfiniteQuestions = (options: UseQuestionsOptions = {}): UseQuestionsReturn & { feedQuestions: Question[] } => {
-  const { questions, isLoading, error, refetch } = useQuestions(options);
+  const { questions, isLoading, error, refetch, loadMore, hasMore, isLoadingMore } = useQuestions(options);
   
   // Create an "infinite" feed by repeating questions
   const feedQuestions = questions.length > 0 
@@ -144,6 +263,9 @@ export const useInfiniteQuestions = (options: UseQuestionsOptions = {}): UseQues
     isLoading,
     error,
     refetch,
+    loadMore,
+    hasMore,
+    isLoadingMore,
   };
 };
 

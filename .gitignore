@@ -19,10 +19,16 @@ ios/
 
 # Environment variables
 .env
+env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Firebase service account keys (CRITICAL - never commit these!)
+**/firebase-adminsdk-*.json
+**/*-firebase-adminsdk-*.json
+functions/*-firebase-adminsdk-*.json
 
 # Metro
 .metro-health-check*

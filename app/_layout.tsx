@@ -5,6 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { colors } from '@/constants/theme';
 import { SettingsProvider } from '@/context/SettingsContext';
 import { AuthProvider } from '@/context/AuthContext';
+import { RevenueCatProvider } from '@/context/RevenueCatContext';
 
 // Smooth transition configuration
 const smoothFadeConfig = {
@@ -31,8 +32,9 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.container}>
       <AuthProvider>
-        <SettingsProvider>
-          <StatusBar style="light" backgroundColor={colors.background} />
+        <RevenueCatProvider>
+          <SettingsProvider>
+            <StatusBar style="light" backgroundColor={colors.background} />
           <Stack
             screenOptions={{
               headerShown: false,
@@ -87,6 +89,7 @@ export default function RootLayout() {
             />
           </Stack>
         </SettingsProvider>
+        </RevenueCatProvider>
       </AuthProvider>
     </GestureHandlerRootView>
   );

@@ -66,8 +66,7 @@
             "./assets/sounds/incorrect.mp3"
           ]
         }
-      ],
-      "react-native-iap"
+      ]
     ],
     "experiments": {
       "typedRoutes": true

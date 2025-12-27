@@ -18,6 +18,7 @@ const DEBUG_CATEGORIES = {
   storage: true,     // AsyncStorage operations
   api: true,         // API calls
   ui: true,          // UI state changes
+  revenueCat: true,   // RevenueCat operations
 };
 
 type DebugCategory = keyof typeof DEBUG_CATEGORIES;

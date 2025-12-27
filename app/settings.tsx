@@ -8,6 +8,7 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
@@ -22,9 +23,11 @@ import { Topic, Difficulty, Company, QuestionCategory } from '@/data/questions';
 import { useTopics } from '@/hooks/useTopics';
 import Paywall from '@/components/Paywall';
 import EmailVerificationBanner from '@/components/EmailVerificationBanner';
+import SubscriptionManager from '@/components/SubscriptionManager';
 import { notificationService, NotificationSettings } from '@/services/notificationService';
 import { NOTIFICATION_MESSAGES } from '@/constants/notifications';
 import { SUPPORT_CONFIG } from '@/constants/support';
+import { useRevenueCat } from '@/context/RevenueCatContext';
 import * as Linking from 'expo-linking';
 
 type IoniconsName = keyof typeof Ionicons.glyphMap;
@@ -81,7 +84,10 @@ export default function SettingsScreen() {
   const router = useRouter();
   
   // Use auth context
-  const { user, isAuthenticated, signOut } = useAuth();
+  const { user, isAuthenticated, signOut, deleteAccount } = useAuth();
+  
+  // Use RevenueCat context for subscription status
+  const { isPro: revenueCatIsPro, purchasePlan, isLoading: revenueCatLoading, restore, subscriptionStatus } = useRevenueCat();
   
   // Fetch topics from Firestore
   const { topics: fetchedTopics, isLoading: topicsLoading, refetch: refetchTopics } = useTopics();
@@ -118,9 +124,12 @@ export default function SettingsScreen() {
   const [isSeeding, setIsSeeding] = useState(false);
   const [questionCount, setQuestionCount] = useState<number | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [showPaywall, setShowPaywall] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const [isPro, setIsPro] = useState(false);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [showSubscriptionManager, setShowSubscriptionManager] = useState(false);
   const [showVerificationBanner, setShowVerificationBanner] = useState(false);
   
   // Notification settings
@@ -132,26 +141,11 @@ export default function SettingsScreen() {
     motivationalNotifications: true,
   });
 
-  // Check user's pro status
+  // Use RevenueCat for pro status instead of Firestore
   useEffect(() => {
-    const checkProStatus = async () => {
-      if (user?.uid && isAuthenticated) {
-        try {
-          const profile = await getUserProfile(user.uid);
-          setIsPro(profile?.isPro || false);
-        } catch (error) {
-          console.error('Error fetching user profile:', error);
-          setIsPro(false);
-        } finally {
-          setIsLoadingProfile(false);
-        }
-      } else {
-        setIsPro(false);
-        setIsLoadingProfile(false);
-      }
-    };
-    checkProStatus();
-  }, [user?.uid, isAuthenticated]);
+    setIsPro(revenueCatIsPro);
+    setIsLoadingProfile(revenueCatLoading);
+  }, [revenueCatIsPro, revenueCatLoading]);
 
   // Check email verification status
   useEffect(() => {
@@ -213,13 +207,7 @@ export default function SettingsScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    if (value) {
-      Alert.alert(
-        '🎉 Notifications Enabled!',
-        'You\'ll receive daily practice reminders, streak alerts, and motivational messages.',
-        [{ text: 'Great!' }]
-      );
-    }
+    
   };
 
 
@@ -283,6 +271,73 @@ export default function SettingsScreen() {
     );
   };
 
+  // Handle delete account
+  const handleDeleteAccount = async () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure you want to delete your account? This action cannot be undone.\n\nThis will permanently delete:\n• Your profile and settings\n• Your progress and statistics\n• All your data\n\nYou will be signed out immediately.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: async () => {
+            // Double confirmation
+            Alert.alert(
+              'Final Confirmation',
+              'This is your last chance. Are you absolutely sure you want to delete your account?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Yes, Delete My Account',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      setIsDeletingAccount(true);
+                      if (hapticFeedback) {
+                        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                      }
+                      
+                      const result = await deleteAccount();
+                      
+                      if (result.success) {
+                        if (hapticFeedback) {
+                          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        }
+                        Alert.alert(
+                          'Account Deleted',
+                          'Your account has been permanently deleted. You will be signed out now.',
+                          [
+                            {
+                              text: 'OK',
+                              onPress: () => {
+                                router.replace('/');
+                              },
+                            },
+                          ]
+                        );
+                      } else {
+                        if (hapticFeedback) {
+                          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                        }
+                        Alert.alert('Error', result.error || 'Failed to delete account. Please try again.');
+                      }
+                    } catch (error: any) {
+                      console.error('Delete account error:', error);
+                      Alert.alert('Error', error.message || 'Failed to delete account. Please try again.');
+                    } finally {
+                      setIsDeletingAccount(false);
+                    }
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  };
+
   // Handle paywall actions
   const handleUpgradeToPro = async () => {
     if (hapticFeedback) {
@@ -309,17 +364,112 @@ export default function SettingsScreen() {
     setShowPaywall(true);
   };
 
-  const handleSelectPlan = async (plan: 'monthly') => {
-    if (hapticFeedback) {
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  const handleSelectPlan = async (plan: 'monthly' | 'yearly') => {
+    try {
+      if (hapticFeedback) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      
+      const result = await purchasePlan(plan);
+      
+      if (result.success) {
+        if (hapticFeedback) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        setShowPaywall(false);
+        Alert.alert(
+          'Success!',
+          'Your subscription is now active. Enjoy Pro features!',
+          [{ text: 'OK' }]
+        );
+      } else {
+        if (hapticFeedback) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+        Alert.alert('Purchase Failed', result.error || 'Please try again.');
+      }
+    } catch (error: any) {
+      console.error('Purchase error:', error);
+      Alert.alert('Error', error.message || 'Purchase failed. Please try again.');
     }
-    // TODO: Implement payment processing with your payment provider
-    Alert.alert(
-      'Upgrade',
-      'Payment integration coming soon!',
-      [{ text: 'OK' }]
-    );
-    setShowPaywall(false);
+  };
+
+  // Handle restore purchases
+  const handleRestorePurchases = async () => {
+    try {
+      setIsRestoring(true);
+      if (hapticFeedback) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      
+      const result = await restore();
+      
+      if (result.success) {
+        if (hapticFeedback) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        Alert.alert(
+          'Success',
+          'Your purchases have been restored.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        if (hapticFeedback) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+        Alert.alert('Restore Failed', result.error || 'No purchases found to restore.');
+      }
+    } catch (error: any) {
+      console.error('Restore error:', error);
+      Alert.alert('Error', error.message || 'Failed to restore purchases');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  // Handle opening store subscription management
+  const handleOpenStoreSubscriptionManagement = async () => {
+    try {
+      if (hapticFeedback) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      
+      if (Platform.OS === 'ios') {
+        const url = 'https://apps.apple.com/account/subscriptions';
+        const canOpen = await Linking.canOpenURL(url);
+        
+        if (canOpen) {
+          await Linking.openURL(url);
+        } else {
+          Alert.alert(
+            'Manage Subscription',
+            'To cancel your subscription:\n\n1. Open Settings on your iPhone\n2. Tap your name at the top\n3. Tap "Subscriptions"\n4. Find "Flashbits" and tap it\n5. Tap "Cancel Subscription"',
+            [{ text: 'OK' }]
+          );
+        }
+      } else if (Platform.OS === 'android') {
+        const url = 'https://play.google.com/store/account/subscriptions';
+        const canOpen = await Linking.canOpenURL(url);
+        
+        if (canOpen) {
+          await Linking.openURL(url);
+        } else {
+          Alert.alert(
+            'Manage Subscription',
+            'To cancel your subscription:\n\n1. Open Google Play Store\n2. Tap Menu (☰)\n3. Tap "Subscriptions"\n4. Find "Flashbits" and tap it\n5. Tap "Cancel Subscription"',
+            [{ text: 'OK' }]
+          );
+        }
+      }
+    } catch (error: any) {
+      console.error('Error opening store subscription management:', error);
+      Alert.alert(
+        'Open Settings',
+        Platform.OS === 'ios'
+          ? 'Please go to Settings → [Your Name] → Subscriptions to manage your subscription.'
+          : 'Please go to Google Play Store → Menu → Subscriptions to manage your subscription.'
+      );
+    }
   };
 
 
@@ -751,6 +901,7 @@ export default function SettingsScreen() {
               />
             </View>
           )}
+
         </Animated.View>
 
         {/* Subscription Section - Pro Member or Upgrade */}
@@ -760,8 +911,11 @@ export default function SettingsScreen() {
             style={styles.section}
           >
             {isPro ? (
-              // Pro Member Card
-              <View style={styles.proMemberCard}>
+              // Pro Member Card - Enhanced
+              <Pressable 
+                style={styles.proMemberCard}
+                onPress={() => setShowSubscriptionManager(true)}
+              >
                 <View style={styles.proIconContainer}>
                   <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
                 </View>
@@ -774,22 +928,19 @@ export default function SettingsScreen() {
                     </View>
                   </View>
                   <Text style={styles.proDescription}>
-                    Full access to all features
+                    {subscriptionStatus?.willRenew 
+                      ? `Renews ${subscriptionStatus.expirationDate ? new Date(subscriptionStatus.expirationDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'soon'}`
+                      : subscriptionStatus?.expirationDate 
+                        ? `Expires ${new Date(subscriptionStatus.expirationDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                        : 'Full access to all features'
+                    }
                   </Text>
                 </View>
-                <Pressable
-                  style={styles.manageSubscriptionButton}
-                  onPress={() => {
-                    Alert.alert(
-                      'Manage Subscription',
-                      'To manage your subscription, open Settings on your device, tap your name at the top, then tap Subscriptions. From there, select Flashbits to manage or cancel your plan.',
-                      [{ text: 'Got it' }]
-                    );
-                  }}
-                >
+                <View style={styles.manageSubscriptionButton}>
                   <Text style={styles.manageSubscriptionText}>Manage</Text>
-                </Pressable>
-              </View>
+                  <Ionicons name="chevron-forward" size={12} color={colors.textSecondary} />
+                </View>
+              </Pressable>
             ) : (
               // Upgrade to Pro Card
               <Pressable
@@ -1440,7 +1591,64 @@ export default function SettingsScreen() {
           </View>
         </Animated.View>
 
-       
+        {/* Legal Information Section */}
+        <Animated.View
+          entering={FadeInDown.duration(400).delay(550)}
+          style={styles.section}
+        >
+          <Text style={styles.sectionTitle}>Legal Information</Text>
+          <View style={styles.legalLinksList}>
+            <Pressable
+              style={styles.legalLinkItem}
+              onPress={async () => {
+                if (hapticFeedback) {
+                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+                Linking.openURL('https://flashbits.co/privacy');
+              }}
+            >
+              <Ionicons name="document-text-outline" size={18} color={colors.textSecondary} />
+              <Text style={styles.legalLinkText}>Privacy Policy</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+            </Pressable>
+            <Pressable
+              style={styles.legalLinkItem}
+              onPress={async () => {
+                if (hapticFeedback) {
+                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                }
+                Linking.openURL('https://flashbits.co/terms');
+              }}
+            >
+              <Ionicons name="document-text-outline" size={18} color={colors.textSecondary} />
+              <Text style={styles.legalLinkText}>Terms and Conditions</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
+            </Pressable>
+          </View>
+        </Animated.View>
+
+        {/* Delete Account - Professional */}
+        {isAuthenticated && (
+          <Animated.View
+            entering={FadeInDown.duration(400).delay(580)}
+            style={styles.deleteAccountContainer}
+          >
+            <Pressable
+              style={styles.deleteAccountButton}
+              onPress={handleDeleteAccount}
+              disabled={isDeletingAccount}
+            >
+              {isDeletingAccount ? (
+                <ActivityIndicator size="small" color={colors.incorrect} />
+              ) : (
+                <>
+                  <Ionicons name="trash-outline" size={16} color={colors.incorrect} />
+                  <Text style={styles.deleteAccountText}>Delete Account</Text>
+                </>
+              )}
+            </Pressable>
+          </Animated.View>
+        )}
 
         {/* Start Button */}
         <Animated.View
@@ -1459,6 +1667,26 @@ export default function SettingsScreen() {
             </Text>
           </Pressable>
         </Animated.View>
+
+        {/* Restore Purchases - Minimalist */}
+        {isAuthenticated && (
+          <Animated.View
+            entering={FadeInDown.duration(400).delay(700)}
+            style={styles.restorePurchasesContainer}
+          >
+            <Pressable
+              style={styles.restorePurchasesButton}
+              onPress={handleRestorePurchases}
+              disabled={isRestoring || revenueCatLoading}
+            >
+              {isRestoring ? (
+                <ActivityIndicator size="small" color={colors.textMuted} />
+              ) : (
+                <Text style={styles.restorePurchasesText}>Restore Purchases</Text>
+              )}
+            </Pressable>
+          </Animated.View>
+        )}
       </ScrollView>
 
       {/* Paywall Modal */}
@@ -1466,6 +1694,12 @@ export default function SettingsScreen() {
         visible={showPaywall}
         onClose={() => setShowPaywall(false)}
         onSelectPlan={handleSelectPlan}
+      />
+
+      {/* Subscription Manager Modal */}
+      <SubscriptionManager
+        visible={showSubscriptionManager}
+        onClose={() => setShowSubscriptionManager(false)}
       />
     </View>
   );
@@ -1538,6 +1772,28 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.sm,
     fontWeight: '600',
     color: colors.primary,
+  },
+  deleteAccountContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingBottom: spacing.lg,
+  },
+  deleteAccountButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: colors.incorrect + '40',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    gap: spacing.xs,
+  },
+  deleteAccountText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '500',
+    color: colors.incorrect,
   },
   verificationBannerContainer: {
     marginTop: spacing.base,
@@ -2218,6 +2474,9 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   manageSubscriptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,
@@ -2228,6 +2487,40 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '500',
     color: colors.textSecondary,
+  },
+  restorePurchasesContainer: {
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  restorePurchasesButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  restorePurchasesText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '400',
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
+  },
+  legalLinksList: {
+    marginTop: spacing.md,
+    gap: spacing.xs,
+  },
+  legalLinkItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    gap: spacing.sm,
+  },
+  legalLinkText: {
+    flex: 1,
+    fontSize: typography.fontSize.sm,
+    fontWeight: '500',
+    color: colors.textPrimary,
   },
 });
 

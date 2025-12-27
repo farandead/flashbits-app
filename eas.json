@@ -22,13 +22,15 @@
         "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-Q1XG9SFFTB",
         "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23lilGvTP0FLJSbpkD",
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
         "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode"
       }
     },
     "preview": {
       "distribution": "internal",
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "buildConfiguration": "Release"
       },
       "android": {
         "buildType": "apk"
@@ -43,12 +45,14 @@
         "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-Q1XG9SFFTB",
         "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23lilGvTP0FLJSbpkD",
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
         "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode"
       }
     },
     "production": {
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "buildConfiguration": "Release"
       },
       "android": {
         "buildType": "app-bundle"
@@ -63,6 +67,7 @@
         "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-Q1XG9SFFTB",
         "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23lilGvTP0FLJSbpkD",
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
         "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode"
       }
     }

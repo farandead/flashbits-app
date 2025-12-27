@@ -25,6 +25,15 @@ import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import Constants from 'expo-constants';
+
+// Conditionally import Google Sign-In (only available in development/production builds, not Expo Go)
+let GoogleSignin: any = null;
+try {
+  GoogleSignin = require('@react-native-google-signin/google-signin').GoogleSignin;
+} catch (error) {
+  console.warn('⚠️ Google Sign-In not available (requires development build, not Expo Go)');
+}
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
@@ -51,12 +60,8 @@ const githubDiscovery = {
 };
 
 // Google OAuth Config
-// Uses environment variable
-const GOOGLE_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID;
-
-if (!GOOGLE_CLIENT_ID) {
-  console.warn('⚠️ EXPO_PUBLIC_GOOGLE_CLIENT_ID not set. Google sign-in will not work.');
-}
+// IMPORTANT: For Firebase Auth, we need the WEB client ID (not iOS/Android client IDs)
+const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -123,16 +128,45 @@ export default function LoginScreen() {
   const [isCheckingVerification, setIsCheckingVerification] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState(''); // Store email for verification screen
 
-  // Get the redirect URI - log it to help with GitHub setup
+  // Configure Google Sign-In on mount
+  useEffect(() => {
+    if (!GOOGLE_WEB_CLIENT_ID || !GoogleSignin) return;
+
+    try {
+      GoogleSignin.configure({
+        webClientId: GOOGLE_WEB_CLIENT_ID,
+        iosClientId: process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, // optional
+        offlineAccess: false,
+      });
+    } catch (error) {
+      console.warn('⚠️ Failed to configure Google Sign-In:', error);
+    }
+  }, []);
+
+  // Get the redirect URI - force custom URL scheme (flashbits://auth)
+  // IMPORTANT: Must use development build, NOT Expo Go (Expo Go uses exp:// which changes)
+  // This ensures a stable redirect URI that matches GitHub OAuth App settings
   const redirectUri = AuthSession.makeRedirectUri({
     scheme: 'flashbits',
     path: 'auth',
   });
+  
+  // Debug: Log redirect URI
+  useEffect(() => {
+    console.log('🔗 GitHub OAuth Redirect URI:', redirectUri);
+    console.log('👆 Set this EXACTLY in your GitHub OAuth App → Authorization callback URL');
+    console.log('💡 Should be: flashbits://auth');
+    if (!redirectUri.startsWith('flashbits://')) {
+      console.warn('⚠️ WARNING: Redirect URI is not using flashbits:// scheme!');
+      console.warn('⚠️ This will fail in GitHub OAuth. Make sure you are using a development build, not Expo Go.');
+    }
+  }, [redirectUri]);
+  
 
   // GitHub OAuth request with manual discovery
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
     {
-      clientId: GITHUB_CLIENT_ID,
+      clientId: GITHUB_CLIENT_ID || '',
       scopes: ['read:user', 'user:email'],
       redirectUri,
       usePKCE: false, // Disable PKCE since we're using a secure backend
@@ -201,12 +235,6 @@ export default function LoginScreen() {
 
     checkAuthAndRedirect();
   }, [isAuthenticated, authLoading, user, router, isRedirecting, isLoading, showSignInLoading]);
-  
-  // Log redirect URI for debugging (check your console!)
-  useEffect(() => {
-    console.log('🔗 GitHub OAuth Redirect URI:', redirectUri);
-    console.log('👆 Copy this EXACTLY to your GitHub OAuth App callback URL');
-  }, [redirectUri]);
 
   // Handle GitHub OAuth response
   useEffect(() => {
@@ -218,6 +246,7 @@ export default function LoginScreen() {
     }
   }, [response]);
 
+
   // Exchange code for token via Firebase Cloud Function
   const handleGitHubCodeExchange = async (code: string) => {
     try {
@@ -227,6 +256,10 @@ export default function LoginScreen() {
       // Call your Firebase Cloud Function
       // Uses environment variable, falls back to default for development
       const CLOUD_FUNCTION_URL = process.env.EXPO_PUBLIC_CLOUD_FUNCTION_URL;
+      
+      if (!CLOUD_FUNCTION_URL) {
+        throw new Error('EXPO_PUBLIC_CLOUD_FUNCTION_URL is not set');
+      }
       
       const response = await fetch(CLOUD_FUNCTION_URL, {
         method: 'POST',
@@ -409,77 +442,118 @@ export default function LoginScreen() {
     }
   };
 
-  // Google Sign In
+  // Google Sign In using @react-native-google-signin/google-signin
+  // This is the recommended approach by Expo and avoids redirect URI issues
+  // Note: Requires development build, not available in Expo Go
   const handleGoogleSignIn = async () => {
     try {
       setIsLoading(true);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+      // Check if Google Sign-In is available (not available in Expo Go)
+      if (!GoogleSignin) {
+        Alert.alert(
+          'Google Sign-In Not Available',
+          'Google Sign-In requires a development build. Please build the app using:\n\nnpx expo run:ios\nor\nnpx expo run:android\n\nExpo Go does not support this feature.',
+          [{ text: 'OK' }]
+        );
+        setIsLoading(false);
+        return;
+      }
+
       const { GoogleAuthProvider, signInWithCredential } = await import('firebase/auth');
       const { auth } = await import('@/config/firebase');
 
-      // Use Expo's auth proxy for a stable HTTPS redirect URI
-      const redirectUri = AuthSession.makeRedirectUri({
-        native: 'flashbits://auth',
-        useProxy: true,
-      } as any);
+      if (!GOOGLE_WEB_CLIENT_ID) {
+        Alert.alert('Error', 'Google OAuth is not configured. Please set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID.');
+        setIsLoading(false);
+        return;
+      }
 
-      console.log('🔗 Google OAuth Redirect URI:', redirectUri);
-      console.log('👆 This should be: https://auth.expo.io/@deadshotz/flashbits');
+      // Check if Google Play Services are available (Android only)
+      if (Platform.OS === 'android') {
+        await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      }
 
-      const discovery = await AuthSession.fetchDiscoveryAsync(
-        'https://accounts.google.com'
-      );
+      // Sign in with Google
+      const userInfo = await GoogleSignin.signIn();
+      
+      // Validate response structure
+      if (!userInfo) {
+        throw new Error('Google Sign-In returned no user information. Please try again.');
+      }
+      
+      if (!userInfo.data) {
+        throw new Error('Google Sign-In response is missing data. Please try again.');
+      }
+      
+      const idToken = userInfo.data.idToken;
+      
+      if (!idToken) {
+        throw new Error('No idToken returned from Google Sign-In. Please try again.');
+      }
 
-      const authRequest = new AuthSession.AuthRequest({
-        clientId: GOOGLE_CLIENT_ID,
-        redirectUri,
-        scopes: ['openid', 'profile', 'email'],
-        responseType: AuthSession.ResponseType.IdToken,
-        usePKCE: false,
-      });
+  
 
-      const result = await authRequest.promptAsync(discovery);
+      // Create Firebase credential and sign in
+      const credential = GoogleAuthProvider.credential(idToken);
+      await signInWithCredential(auth, credential);
 
-      if (result.type === 'success') {
-        const { id_token } = result.params;
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Prevent useEffect from also redirecting
+      setIsRedirecting(true);
+
+      // Show the fun loading screen
+      setIsLoading(false);
+      setShowSignInLoading(true);
+
+      // Check if new user needs onboarding
+      const user = auth.currentUser;
+      if (user) {
+        const hasOnboarded = await hasCompletedOnboarding(user.uid);
         
-        const credential = GoogleAuthProvider.credential(id_token);
-        await signInWithCredential(auth, credential);
-
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-        // Prevent useEffect from also redirecting
-        setIsRedirecting(true);
-
-        // Show the fun loading screen
-        setIsLoading(false);
-        setShowSignInLoading(true);
-
-        // Check if new user needs onboarding
-        const user = auth.currentUser;
-        if (user) {
-          const hasOnboarded = await hasCompletedOnboarding(user.uid);
-          
-          // Small delay to show the loading screen
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          
-          if (hasOnboarded) {
-            router.replace('/home');
-          } else {
-            router.replace('/onboarding');
-          }
-        }
-      } else {
-        setIsLoading(false);
-        if (result.type !== 'cancel') {
-          Alert.alert('Error', 'Google sign in was cancelled or failed.');
+        // Small delay to show the loading screen
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        if (hasOnboarded) {
+          router.replace('/home');
+        } else {
+          router.replace('/onboarding');
         }
       }
     } catch (error: any) {
-      console.error('Google auth error:', error);
-      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      Alert.alert('Error', 'Google sign in failed. Please try again.');
+      console.error('Google sign in error:', error);
+      
+      // Handle user cancellation gracefully
+      if (error.code === 'SIGN_IN_CANCELLED' || error.code === '10') {
+        // User cancelled, don't show error
+        setIsLoading(false);
+        return;
+      }
+      
+      // Handle specific error cases
+      let errorMessage = 'Google sign in failed. Please try again.';
+      
+      if (error.message) {
+        errorMessage = error.message;
+      } else if (error.code) {
+        switch (error.code) {
+          case 'SIGN_IN_REQUIRED':
+            errorMessage = 'Please sign in to your Google account.';
+            break;
+          case 'INVALID_ACCOUNT':
+            errorMessage = 'Invalid Google account. Please try a different account.';
+            break;
+          case 'NETWORK_ERROR':
+            errorMessage = 'Network error. Please check your internet connection.';
+            break;
+          default:
+            errorMessage = `Google sign in failed (${error.code}). Please try again.`;
+        }
+      }
+      
+      Alert.alert('Sign In Error', errorMessage);
       setIsLoading(false);
     }
   };
@@ -888,7 +962,7 @@ export default function LoginScreen() {
       <View style={styles.heroSection}>
         <View style={styles.logoContainer}>
           <Image 
-            source={require('@/assets/icons/icon.png')} 
+            source={require('@/assets/icons/in-app-icon.png')} 
             style={styles.logoImage}
             resizeMode="contain"
           />
@@ -914,15 +988,17 @@ export default function LoginScreen() {
           <Text style={styles.authButtonText}>Continue with Email</Text>
         </Pressable>
 
-        {/* Google Sign In */}
-        <Pressable
-          style={styles.authButton}
-          onPress={handleGoogleSignIn}
-          disabled={isLoading}
-        >
-          <Ionicons name="logo-google" size={18} color={colors.textPrimary} />
-          <Text style={styles.authButtonText}>Continue with Google</Text>
-        </Pressable>
+        {/* Google Sign In - Only show if available (requires development build) */}
+        {GoogleSignin && (
+          <Pressable
+            style={styles.authButton}
+            onPress={handleGoogleSignIn}
+            disabled={isLoading}
+          >
+            <Ionicons name="logo-google" size={18} color={colors.textPrimary} />
+            <Text style={styles.authButtonText}>Continue with Google</Text>
+          </Pressable>
+        )}
 
         {/* GitHub Sign In */}
         <Pressable
