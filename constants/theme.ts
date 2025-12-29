@@ -40,6 +40,10 @@ export const colors = {
   overlay: 'rgba(0, 0, 0, 0.7)',
   overlayLight: 'rgba(0, 0, 0, 0.4)',
   
+  // Card backgrounds (semi-transparent white for subtle elevation)
+  cardSubtle: 'rgba(255, 255, 255, 0.03)',
+  borderSubtle: 'rgba(255, 255, 255, 0.08)',
+  
   // Topic badges
   topicArrays: '#FF6B6B',
   topicHashmaps: '#4ECDC4',

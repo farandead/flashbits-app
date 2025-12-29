@@ -18,6 +18,7 @@ import { useRevenueCat } from '@/context/RevenueCatContext';
 import { PurchasesPackage } from 'react-native-purchases';
 import PurchasesUI from 'react-native-purchases-ui';
 import type { PurchasesPackage as PurchasesPackageType } from 'react-native-purchases';
+import { debugError } from '@/utils/debug';
 
 interface PaywallProps {
   visible: boolean;
@@ -136,7 +137,7 @@ const Paywall: React.FC<PaywallProps> = ({
         onClose();
       }
     } catch (error: any) {
-      console.error('RevenueCat paywall error:', error);
+      debugError('revenueCat', 'RevenueCat paywall error:', error);
       if (!error.userCancelled) {
         Alert.alert('Error', error.message || 'Failed to present paywall');
       }
@@ -185,7 +186,7 @@ const Paywall: React.FC<PaywallProps> = ({
         Alert.alert('Purchase Failed', result.error || 'Please try again.');
       }
     } catch (error: any) {
-      console.error('Purchase error:', error);
+      debugError('revenueCat', 'Purchase error:', error);
       Alert.alert('Error', error.message || 'Purchase failed. Please try again.');
     } finally {
       setIsPurchasing(false);
@@ -252,8 +253,12 @@ const Paywall: React.FC<PaywallProps> = ({
               <Ionicons name="star" size={12} color="#FFD700" />
             </View>
             <Text style={styles.subtitle}>
-              Limited time offer - Save 30%
+              Get full access to all features
             </Text>
+            <View style={styles.trialBadge}>
+              <Ionicons name="gift-outline" size={14} color={colors.primary} />
+              <Text style={styles.trialText}>7-day free trial</Text>
+            </View>
           </Animated.View>
 
           {/* Pricing Plans */}
@@ -405,12 +410,14 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: spacing.lg,
     right: spacing.md,
-    width: 36,
-    height: 36,
-    borderRadius: borderRadius.full,
-    backgroundColor: 'transparent',
+    width: 40,
+    height: 40,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
     zIndex: 10,
   },
   scrollView: {
@@ -428,17 +435,17 @@ const styles = StyleSheet.create({
   iconContainer: {
     width: 56,
     height: 56,
-    borderRadius: borderRadius.full,
-    backgroundColor: 'transparent',
+    borderRadius: borderRadius.md,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 255, 148, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: spacing.md,
   },
   title: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     color: colors.textPrimary,
     textAlign: 'center',
     marginBottom: spacing.sm,
@@ -463,31 +470,48 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: colors.textSecondary,
     textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  trialBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.md,
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.2)',
+    marginTop: spacing.xs,
+  },
+  trialText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '600',
+    color: colors.primary,
   },
   pricingSection: {
     marginBottom: spacing.xl,
   },
   planCard: {
-    backgroundColor: 'transparent',
-    borderRadius: borderRadius.lg,
+    backgroundColor: colors.cardSubtle,
+    borderRadius: borderRadius.md,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.primary,
+    borderColor: colors.borderSubtle,
     position: 'relative',
-    opacity: 0.6,
   },
   planCardSelected: {
-    opacity: 1,
-    borderWidth: 2,
-    backgroundColor: colors.primaryGlow,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.4)',
+    backgroundColor: 'rgba(0, 255, 148, 0.08)',
   },
   discountBadge: {
     position: 'absolute',
-    top: -10,
+    top: -8,
     right: spacing.md,
     backgroundColor: colors.primary,
     paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    paddingVertical: 3,
     borderRadius: borderRadius.sm,
   },
   discountText: {
@@ -509,7 +533,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   planName: {
-    fontSize: typography.fontSize.base,
+    fontSize: typography.fontSize.sm,
     fontWeight: '600',
     color: colors.textPrimary,
     marginBottom: 2,
@@ -534,8 +558,8 @@ const styles = StyleSheet.create({
     marginRight: spacing.sm,
   },
   price: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     color: colors.primary,
   },
   period: {
@@ -570,9 +594,9 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: borderRadius.sm,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 255, 148, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: spacing.sm,
@@ -615,6 +639,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     paddingBottom: spacing.xl,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSubtle,
   },
   continueButton: {
     backgroundColor: colors.primary,

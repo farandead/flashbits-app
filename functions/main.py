@@ -124,7 +124,8 @@ def _check_rate_limit(ip: str, add_request: bool = True) -> tuple[bool, int, int
         cors_origins="*",
         cors_methods=["GET", "POST", "OPTIONS"]
     ),
-    secrets=[GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET]
+    secrets=[GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET],
+    timeout_sec=60  # Increase timeout to 60 seconds (max for 1st gen functions)
 )
 def exchangeGitHubCode(req: https_fn.Request) -> https_fn.Response:
     """
@@ -224,7 +225,7 @@ def exchangeGitHubCode(req: https_fn.Request) -> https_fn.Response:
             headers={
                 'Accept': 'application/json'
             },
-            timeout=10
+            timeout=30  # Increased timeout for GitHub API calls
         )
         
         # Log the response for debugging
@@ -284,7 +285,7 @@ def exchangeGitHubCode(req: https_fn.Request) -> https_fn.Response:
                 'Authorization': f'Bearer {access_token}',
                 'Accept': 'application/json'
             },
-            timeout=10
+            timeout=30  # Increased timeout for GitHub API calls
         )
         
         if user_response.status_code != 200:

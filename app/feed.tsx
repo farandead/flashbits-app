@@ -9,6 +9,7 @@ import {
   Pressable,
   ActivityIndicator,
   Modal,
+  RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, {
@@ -16,16 +17,20 @@ import Animated, {
   useAnimatedStyle,
   withTiming,
   withSequence,
+  FadeIn,
   FadeInUp,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { QuestionCard } from '@/components/QuestionCard';
+import { StreakFire, StreakBroken, StreakMilestone, XPEarned, PreviouslySolvedInfo } from '@/components/StreakFire';
+import { useStreak } from '@/hooks/useStreak';
 import { Question } from '@/data/questions';
 import { useInfiniteQuestions } from '@/hooks/useQuestions';
 import { useSettings } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
-import { recordCorrectAnswer, recordWrongAnswer, recordSkippedQuestion, getUserStats } from '@/services/statsService';
+import { recordCorrectAnswer, recordWrongAnswer, recordSkippedQuestion, getUserStats, awardMilestoneXP } from '@/services/statsService';
+import { getLocalStats } from '@/services/statsQueueService';
 import { initializeSounds, playCorrectSound, playIncorrectSound, cleanupSounds, setSoundEnabled } from '@/services/soundService';
 import { logRankUp, logQuestionsCompleted, logStartedPracticing } from '@/services/activityService';
 import { getUserProfile } from '@/services/userService';
@@ -37,14 +42,17 @@ type IoniconsName = keyof typeof Ionicons.glyphMap;
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 // Hacker Ranks - cyberpunk style progression
+// Adjusted for new XP system with progressive streak multipliers and ~2K questions
 const HACKER_RANKS: { name: string; minXP: number; icon: IoniconsName; color: string }[] = [
   { name: 'n00b', minXP: 0, icon: 'person-outline', color: '#6B7280' },
-  { name: 'Script Kiddie', minXP: 5, icon: 'code-slash', color: '#10B981' },
-  { name: 'Code Monkey', minXP: 15, icon: 'terminal', color: '#3B82F6' },
-  { name: 'Hacktivist', minXP: 30, icon: 'laptop-outline', color: '#8B5CF6' },
-  { name: 'White Hat', minXP: 50, icon: 'shield-checkmark', color: '#F59E0B' },
-  { name: 'Black Hat', minXP: 100, icon: 'skull', color: '#EF4444' },
-  { name: 'Ghost', minXP: 200, icon: 'eye-off', color: '#00FF94' },
+  { name: 'Script Kiddie', minXP: 50, icon: 'code-slash', color: '#10B981' },
+  { name: 'Code Monkey', minXP: 150, icon: 'terminal', color: '#3B82F6' },
+  { name: 'Hacktivist', minXP: 350, icon: 'laptop-outline', color: '#8B5CF6' },
+  { name: 'White Hat', minXP: 700, icon: 'shield-checkmark', color: '#F59E0B' },
+  { name: 'Black Hat', minXP: 1500, icon: 'skull', color: '#EF4444' },
+  { name: 'Ghost', minXP: 3000, icon: 'eye-off', color: '#00FF94' },
+  { name: 'Phantom', minXP: 6000, icon: 'sparkles', color: '#A855F7' },
+  { name: 'Legend', minXP: 12000, icon: 'diamond', color: '#FFD700' },
 ];
 
 const getHackerRank = (xp: number) => {
@@ -93,6 +101,12 @@ export default function QuestionFeed() {
   const [previouslyWrong, setPreviouslyWrong] = useState<Set<string>>(new Set());
   const [previouslySkipped, setPreviouslySkipped] = useState<Set<string>>(new Set());
   const [userXP, setUserXP] = useState(0); // Track user's total XP from Firestore
+  const [previousXP, setPreviousXP] = useState(0); // Track previous XP to detect changes
+  const [showXPEarned, setShowXPEarned] = useState(false); // Show XP earned toast
+  const [xpEarnedAmount, setXpEarnedAmount] = useState(1); // Amount of XP earned (for display)
+  const [xpStreakMultiplier, setXpStreakMultiplier] = useState(0); // Streak multiplier for display
+  const [showPreviouslySolvedInfo, setShowPreviouslySolvedInfo] = useState(false); // Show info about previously solved
+  const xpBadgeScale = useSharedValue(1); // Animate XP badge
   const [userName, setUserName] = useState<string | null>(null); // User's display name for activity logging
   const [sessionQuestionsAnswered, setSessionQuestionsAnswered] = useState(0); // Track questions answered in this session
   const [hasLoggedSessionStart, setHasLoggedSessionStart] = useState(false); // Track if we've logged session start
@@ -101,6 +115,27 @@ export default function QuestionFeed() {
   const [showRankUpModal, setShowRankUpModal] = useState(false);
   const [newRank, setNewRank] = useState<typeof HACKER_RANKS[0] | null>(null);
   const [previousRankIndex, setPreviousRankIndex] = useState(-1); // -1 means not initialized yet
+
+  // Streak feature
+  const {
+    streak,
+    consecutiveCorrect,
+    isActive: isStreakActive,
+    bestStreak,
+    showCelebration: showStreakCelebration,
+    showMilestone,
+    currentMilestone,
+    wasJustBroken,
+    brokenStreakCount,
+    recordCorrectAnswer: recordStreakCorrect,
+    recordIncorrectAnswer: recordStreakIncorrect,
+    recordSkip: recordStreakSkip,
+    dismissCelebration,
+    dismissMilestone,
+    dismissBrokenStreak,
+    getProgress,
+    getNextMilestone,
+  } = useStreak();
 
   // Skip toast animation
   const skipToastOpacity = useSharedValue(0);
@@ -224,16 +259,41 @@ export default function QuestionFeed() {
     const loadUserData = async () => {
       if (user?.uid) {
         try {
-          // Load stats
-          const stats = await getUserStats(user.uid);
+          // Try to load from Firestore first
+          let stats;
+          try {
+            stats = await getUserStats(user.uid);
+          } catch (error) {
+            // If offline, try local stats
+            debug('feed', 'Failed to load from Firestore, trying local stats...');
+            const localStats = await getLocalStats();
+            if (localStats) {
+              // Use local stats structure
+              stats = {
+                answeredQuestionIds: localStats.answeredQuestionIds || [],
+                correctQuestionIds: localStats.correctQuestionIds || [],
+                wrongQuestionIds: localStats.wrongQuestionIds || [],
+                skippedQuestionIds: localStats.skippedQuestionIds || [],
+                xp: localStats.xp || 0,
+              } as any;
+            } else {
+              throw error; // Re-throw if no local stats either
+            }
+          }
+
+          // Also load local stats to merge with server stats
+          const localStats = await getLocalStats();
+          const mergedXP = localStats ? Math.max(stats.xp || 0, localStats.xp || 0) : (stats.xp || 0);
+
           setPreviouslyAnswered(new Set(stats.answeredQuestionIds || []));
           setPreviouslyCorrect(new Set(stats.correctQuestionIds || []));
           setPreviouslyWrong(new Set(stats.wrongQuestionIds || []));
           setPreviouslySkipped(new Set(stats.skippedQuestionIds || []));
-          setUserXP(stats.xp || 0); // Load user's XP from Firestore
+          setUserXP(mergedXP); // Use merged XP (server or local, whichever is higher)
+          setPreviousXP(mergedXP); // Initialize previous XP to prevent showing toast on first load
           
           // Initialize previous rank index to prevent showing rank-up modal on first load
-          const currentRank = getHackerRank(stats.xp || 0);
+          const currentRank = getHackerRank(mergedXP);
           setPreviousRankIndex(currentRank.index);
           
           // Load user profile for name
@@ -245,11 +305,17 @@ export default function QuestionFeed() {
             correct: stats.correctQuestionIds?.length || 0,
             wrong: stats.wrongQuestionIds?.length || 0,
             skipped: stats.skippedQuestionIds?.length || 0,
-            xp: stats.xp || 0,
+            xp: mergedXP,
             rank: currentRank.current.name,
           });
         } catch (error) {
           debugError('feed', 'Error loading user data:', error);
+          // Try to load local stats as fallback
+          const localStats = await getLocalStats();
+          if (localStats) {
+            setUserXP(localStats.xp || 0);
+            setPreviousXP(localStats.xp || 0);
+          }
         }
       } else {
         // Reset state if user logs out
@@ -280,6 +346,51 @@ export default function QuestionFeed() {
   const progressToNext = rankInfo.next
     ? ((xp - rankInfo.current.minXP) / (rankInfo.next.minXP - rankInfo.current.minXP)) * 100
     : 100;
+
+  // Detect XP increase and show toast
+  useEffect(() => {
+    if (isAuthenticated && userXP > previousXP && previousXP > 0) {
+      // XP increased - calculate amount earned and show toast
+      const earned = userXP - previousXP;
+      setXpEarnedAmount(earned);
+      // Note: streakMultiplier is set when XP is earned, not here
+      setShowXPEarned(true);
+      xpBadgeScale.value = withSequence(
+        withTiming(1.2, { duration: 200 }),
+        withTiming(1, { duration: 300 })
+      );
+    }
+    setPreviousXP(userXP);
+  }, [userXP, previousXP, isAuthenticated, xpBadgeScale]);
+
+  // Animated style for XP badge
+  const xpBadgeAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: xpBadgeScale.value }],
+  }));
+
+  // Award XP when milestone is reached
+  useEffect(() => {
+    if (isAuthenticated && showMilestone && currentMilestone > 0 && user?.uid) {
+      const awardXP = async () => {
+        const xpReward = await awardMilestoneXP(user.uid, currentMilestone);
+        if (xpReward > 0) {
+          // Update local XP state
+          setUserXP((prev) => prev + xpReward);
+          // Show XP earned toast for milestone (with a slight delay after milestone toast)
+          setTimeout(() => {
+            setXpEarnedAmount(xpReward);
+            setShowXPEarned(true);
+            // Animate badge
+            xpBadgeScale.value = withSequence(
+              withTiming(1.2, { duration: 200 }),
+              withTiming(1, { duration: 300 })
+            );
+          }, 500); // Delay to show after milestone celebration
+        }
+      };
+      awardXP();
+    }
+  }, [showMilestone, currentMilestone, isAuthenticated, user?.uid, xpBadgeScale]);
 
   // Detect rank-up and show modal
   useEffect(() => {
@@ -346,15 +457,23 @@ export default function QuestionFeed() {
           playCorrectSound();
         }
         
+        // Check if this is the first time answering correctly (to update XP and streak)
+        const wasCorrectBefore = previouslyCorrect.has(questionId);
+        
+        // Only record streak progress for NEW questions (not previously solved)
+        if (!wasCorrectBefore) {
+          recordStreakCorrect();
+        } else {
+          // Show info toast explaining why XP/streak didn't increment
+          setShowPreviouslySolvedInfo(true);
+        }
+        
         setCorrectCount((prev) => prev + 1);
         setWrongQuestions((prev) => {
           const next = new Set(prev);
           next.delete(questionId);
           return next;
         });
-        
-        // Check if this is the first time answering correctly (to update XP)
-        const wasCorrectBefore = previouslyCorrect.has(questionId);
         
         // Update historical tracking - BUT don't update previouslyAnswered immediately
         // This prevents the question from being filtered out until user swipes
@@ -373,20 +492,32 @@ export default function QuestionFeed() {
           return next;
         });
         
-        // Update XP only if this is the first correct answer for this question
-        if (!wasCorrectBefore && user?.uid) {
-          setUserXP((prev) => prev + 1);
-        }
-        
-        // Save correct answer to Firestore
+        // Save correct answer to Firestore and get XP earned
+        // XP is only awarded for NEW questions (handled in recordCorrectAnswer)
+        let xpEarned = 0;
+        let streakMultiplier = 0;
         if (user?.uid && topic && difficulty) {
-          recordCorrectAnswer(user.uid, questionId, topic, difficulty);
+          // Only pass streak for NEW questions (not previously solved)
+          const currentStreak = (!wasCorrectBefore && isStreakActive) ? streak : 0;
+          const result = await recordCorrectAnswer(user.uid, questionId, topic, difficulty, currentStreak);
+          xpEarned = result.xp;
+          streakMultiplier = result.streakMultiplier;
+          
+          // Update XP only if this is the first correct answer for this question
+          if (!wasCorrectBefore && xpEarned > 0) {
+            setUserXP((prev) => prev + xpEarned);
+            // Store streak multiplier for display
+            setXpStreakMultiplier(streakMultiplier);
+          }
         }
       } else {
         // Play incorrect answer sound
         if (soundEffects) {
           playIncorrectSound();
         }
+        
+        // Record streak break
+        recordStreakIncorrect();
         
         setWrongQuestions((prev) => new Set([...prev, questionId]));
         
@@ -503,6 +634,31 @@ export default function QuestionFeed() {
   const viewabilityConfig = useRef({
     itemVisiblePercentThreshold: 50,
   }).current;
+
+  // Handle pull-to-refresh
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  const handleRefresh = useCallback(async () => {
+    if (isRefreshing || isLoading) return;
+    
+    setIsRefreshing(true);
+    if (hapticFeedback) {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    
+    try {
+      await refetch();
+      // Reset to first question after refresh
+      setCurrentIndex(0);
+      if (flatListRef.current) {
+        flatListRef.current.scrollToIndex({ index: 0, animated: false });
+      }
+    } catch (error) {
+      debugError('feed', 'Error refreshing questions:', error);
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, isLoading, refetch, hapticFeedback]);
 
   // Navigate back to home
   const handleBackPress = async () => {
@@ -692,19 +848,97 @@ export default function QuestionFeed() {
               />
             </View>
           </View>
-          <View style={styles.xpBadge}>
+          <Animated.View 
+            style={[
+              styles.xpBadge,
+              xpBadgeAnimatedStyle,
+            ]}
+          >
             {isAuthenticated ? (
               <Text style={styles.xpText}>{xp} XP</Text>
             ) : (
               <Text style={styles.signInPrompt}>Sign in to earn XP</Text>
             )}
-          </View>
+          </Animated.View>
         </Pressable>
         
         <Pressable onPress={handleSettingsPress} style={styles.settingsButton}>
           <Ionicons name="settings-outline" size={22} color={colors.textPrimary} />
         </Pressable>
       </View>
+
+      {/* Session Stats - Bottom Right */}
+      <View style={styles.sessionStatsContainer}>
+        {/* Streak indicator */}
+        {(isStreakActive || consecutiveCorrect > 0) && (
+          <View style={styles.streakContainer}>
+            <Animated.View 
+              entering={FadeIn.duration(400)} 
+              style={styles.streakIndicator}
+            >
+              {isStreakActive ? (
+                <>
+                  <View style={[styles.streakIconActive, showStreakCelebration && styles.streakIconCelebrating]}>
+                    <Ionicons name="flame" size={16} color="#FF6B00" />
+                  </View>
+                  <Text style={styles.streakCountActive}>{streak}</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="flame-outline" size={14} color={colors.textMuted} />
+                  <View style={styles.streakDotsMinimal}>
+                    {[0, 1, 2].map((i) => (
+                      <View
+                        key={i}
+                        style={[
+                          styles.streakDotMinimal,
+                          i < consecutiveCorrect && styles.streakDotFilled,
+                        ]}
+                      />
+                    ))}
+                  </View>
+                </>
+              )}
+            </Animated.View>
+          </View>
+        )}
+      </View>
+
+      {/* Streak Broken Toast */}
+      {wasJustBroken && (
+        <StreakBroken
+          previousStreak={brokenStreakCount}
+          onComplete={dismissBrokenStreak}
+        />
+      )}
+
+      {/* Streak Milestone Toast */}
+      {showMilestone && (
+        <StreakMilestone
+          streak={currentMilestone}
+          nextMilestone={getNextMilestone()}
+          onComplete={dismissMilestone}
+        />
+      )}
+
+      {/* XP Earned Toast */}
+      {showXPEarned && (
+        <XPEarned
+          amount={xpEarnedAmount}
+          streakMultiplier={xpStreakMultiplier}
+          onComplete={() => {
+            setShowXPEarned(false);
+            setXpStreakMultiplier(0); // Reset after toast dismisses
+          }}
+        />
+      )}
+
+      {/* Previously Solved Info Toast */}
+      {showPreviouslySolvedInfo && (
+        <PreviouslySolvedInfo
+          onComplete={() => setShowPreviouslySolvedInfo(false)}
+        />
+      )}
 
       {/* Skip Toast Notification */}
       {showSkipToast && (
@@ -920,6 +1154,15 @@ export default function QuestionFeed() {
               }
             : undefined
         }
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+            progressViewOffset={0}
+          />
+        }
         onScrollToIndexFailed={(info) => {
           // Handle scroll to index failures gracefully
           debug('feed', 'Scroll to index failed:', info);
@@ -993,27 +1236,33 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.md,
     gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'transparent',
+    width: 40,
+    height: 40,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   settingsButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'transparent',
+    width: 40,
+    height: 40,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   rankInfo: {
     flex: 1,
@@ -1025,9 +1274,9 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   xpBar: {
-    height: 4,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 2,
+    height: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 1.5,
     marginTop: 4,
     overflow: 'hidden',
   },
@@ -1036,10 +1285,12 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   xpBadge: {
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   xpText: {
     fontSize: typography.fontSize.xs,
@@ -1057,11 +1308,13 @@ const styles = StyleSheet.create({
     bottom: 40,
     left: spacing.lg,
     right: spacing.lg,
-    backgroundColor: colors.background + 'E6',
+    backgroundColor: colors.cardSubtle,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
     gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   statsBarTitle: {
     fontSize: 10,
@@ -1093,9 +1346,8 @@ const styles = StyleSheet.create({
   },
   statDivider: {
     width: 1,
-    height: 24,
-    backgroundColor: colors.border,
-    opacity: 0.5,
+    height: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   wrongLabel: {
     color: colors.incorrect,
@@ -1160,13 +1412,13 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     backgroundColor: colors.primary,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
   },
   retryText: {
-    fontSize: typography.fontSize.md,
-    fontWeight: '700',
+    fontSize: typography.fontSize.sm,
+    fontWeight: '600',
     color: colors.textInverse,
   },
 
@@ -1195,12 +1447,12 @@ const styles = StyleSheet.create({
   adjustFiltersButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.primary + '40',
+    borderColor: 'rgba(0, 255, 148, 0.2)',
     gap: spacing.xs,
   },
   adjustFiltersButtonText: {
@@ -1216,12 +1468,14 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   modalContent: {
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: colors.background,
     borderRadius: borderRadius.xl,
     width: '100%',
     maxWidth: 400,
     padding: spacing.xl,
     position: 'relative',
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSubtle,
   },
   closeButton: {
     position: 'absolute',
@@ -1229,10 +1483,12 @@ const styles = StyleSheet.create({
     right: spacing.md,
     width: 40,
     height: 40,
-    borderRadius: borderRadius.full,
-    backgroundColor: colors.background,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
     zIndex: 10,
   },
   signInContainer: {
@@ -1257,17 +1513,17 @@ const styles = StyleSheet.create({
   },
   signInButton: {
     backgroundColor: colors.primary,
-    paddingVertical: spacing.xl,
-    paddingHorizontal: spacing.xl,
-    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.md,
     width: '100%',
     alignItems: 'center',
     marginTop: spacing.lg,
     marginBottom: spacing.md,
   },
   signInButtonText: {
-    fontSize: typography.fontSize.md,
-    fontWeight: '700',
+    fontSize: typography.fontSize.sm,
+    fontWeight: '600',
     color: colors.textInverse,
   },
   continueBrowsingButton: {
@@ -1283,35 +1539,35 @@ const styles = StyleSheet.create({
 
   // Rank-Up Modal
   rankUpModal: {
-    backgroundColor: colors.card,
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.xl,
-    padding: spacing['2xl'],
+    padding: spacing.xl,
     marginHorizontal: spacing.md,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.4,
-    shadowRadius: 20,
-    elevation: 15,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
     maxWidth: 400,
     width: '90%',
   },
   rankUpIconContainer: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 72,
+    height: 72,
+    borderRadius: borderRadius.md,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: spacing.lg,
-    borderWidth: 2,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   rankUpBadge: {
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,
     marginBottom: spacing.md,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   rankUpBadgeText: {
     fontSize: typography.fontSize.xs,
@@ -1321,21 +1577,22 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   rankUpName: {
-    fontSize: typography.fontSize['xl'],
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     textAlign: 'center',
     marginBottom: spacing.lg,
-    letterSpacing: 0.5,
   },
   rankUpXPBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.sm,
     borderRadius: borderRadius.sm,
     marginBottom: spacing.lg,
     gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   rankUpXPText: {
     fontSize: typography.fontSize.sm,
@@ -1345,7 +1602,7 @@ const styles = StyleSheet.create({
   rankUpDivider: {
     width: '100%',
     height: 1,
-    backgroundColor: colors.border,
+    backgroundColor: colors.borderSubtle,
     marginBottom: spacing.lg,
   },
   rankUpNextContainer: {
@@ -1359,7 +1616,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: spacing.xs,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   rankUpNextGoal: {
     fontSize: typography.fontSize.sm,
@@ -1367,20 +1624,73 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
+  // Session Stats & Streak Styles
+  sessionStatsContainer: {
+    position: 'absolute',
+    bottom: 140,
+    right: spacing.base,
+    zIndex: 100,
+    alignItems: 'flex-end',
+  },
+  streakContainer: {
+    alignItems: 'flex-end',
+  },
+  streakIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.cardSubtle,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  streakIconActive: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 107, 0, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  streakIconCelebrating: {
+    backgroundColor: 'rgba(255, 107, 0, 0.3)',
+  },
+  streakCountActive: {
+    fontSize: typography.fontSize.base,
+    fontWeight: '700',
+    color: '#FF6B00',
+    minWidth: 20,
+    textAlign: 'center',
+  },
+  streakDotsMinimal: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  streakDotMinimal: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: colors.border,
+  },
+  streakDotFilled: {
+    backgroundColor: '#FF6B00',
+  },
+
   rankUpCloseButton: {
     backgroundColor: colors.primary,
-    paddingVertical: spacing.base,
-    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
     borderRadius: borderRadius.md,
     width: '100%',
     alignItems: 'center',
     marginTop: spacing.sm,
   },
   rankUpCloseText: {
-    fontSize: typography.fontSize.base,
+    fontSize: typography.fontSize.sm,
     fontWeight: '600',
     color: colors.textInverse,
-    letterSpacing: 0.5,
   },
   
   // End Screen - Minimalist Design
@@ -1424,12 +1734,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.xs,
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderSubtle,
   },
   endScreenButtonText: {
     fontSize: typography.fontSize.sm,

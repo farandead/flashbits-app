@@ -1,4 +1,5 @@
 import { Audio } from 'expo-av';
+import { debug, debugError } from '@/utils/debug';
 
 // Sound instances
 let correctSound: Audio.Sound | null = null;
@@ -23,7 +24,7 @@ export const initializeSounds = async () => {
       );
       correctSound = correct;
     } catch (error) {
-      console.log('✨ Correct sound file not found (assets/sounds/correct.mp3). Add it to enable sound effects.');
+      debug('ui', 'Correct sound file not found (assets/sounds/correct.mp3). Add it to enable sound effects.');
     }
 
     // Try to load incorrect answer sound
@@ -34,12 +35,12 @@ export const initializeSounds = async () => {
       );
       incorrectSound = incorrect;
     } catch (error) {
-      console.log('✨ Incorrect sound file not found (assets/sounds/incorrect.mp3). Add it to enable sound effects.');
+      debug('ui', 'Incorrect sound file not found (assets/sounds/incorrect.mp3). Add it to enable sound effects.');
     }
 
     soundsInitialized = true;
   } catch (error) {
-    console.log('Sound system initialized without audio files. Add sound files to enable audio feedback.');
+    debug('ui', 'Sound system initialized without audio files. Add sound files to enable audio feedback.');
   }
 };
 
@@ -51,7 +52,7 @@ export const playCorrectSound = async () => {
     await correctSound.replayAsync();
   } catch (error) {
     // Silently fail if sound can't play
-    console.log('Could not play correct sound');
+    debug('ui', 'Could not play correct sound');
   }
 };
 
@@ -63,7 +64,7 @@ export const playIncorrectSound = async () => {
     await incorrectSound.replayAsync();
   } catch (error) {
     // Silently fail if sound can't play
-    console.log('Could not play incorrect sound');
+    debug('ui', 'Could not play incorrect sound');
   }
 };
 
@@ -89,7 +90,7 @@ export const cleanupSounds = async () => {
       incorrectSound = null;
     }
   } catch (error) {
-    console.error('Error cleaning up sounds:', error);
+    debugError('ui', 'Error cleaning up sounds:', error);
   }
 };
 

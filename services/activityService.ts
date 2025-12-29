@@ -17,6 +17,7 @@ import {
   Timestamp,
   where
 } from 'firebase/firestore';
+import { debug, debugError, debugWarn } from '@/utils/debug';
 
 // Activity types that can be logged
 export type ActivityType = 
@@ -179,11 +180,11 @@ export const logActivity = async (
     */
     
     if (__DEV__) {
-      console.log('📣 Activity logged:', type, message);
+      debug('api', 'Activity logged:', type, message);
     }
   } catch (error) {
     // Don't throw - activity logging shouldn't break the app
-    console.error('Error logging activity:', error);
+    debugError('api', 'Error logging activity:', error);
   }
 };
 
@@ -200,7 +201,7 @@ export const getRecentActivities = async (maxResults: number = DEFAULT_ACTIVITIE
     
     if (limitValue <= 0) {
       if (__DEV__) {
-        console.warn('Invalid limit value, using default:', maxResults);
+        debugWarn('api', 'Invalid limit value, using default:', maxResults);
       }
       return [];
     }
@@ -219,7 +220,7 @@ export const getRecentActivities = async (maxResults: number = DEFAULT_ACTIVITIE
       ...doc.data()
     } as Activity));
   } catch (error) {
-    console.error('Error fetching activities:', error);
+    debugError('api', 'Error fetching activities:', error);
     return [];
   }
 };

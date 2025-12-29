@@ -15,6 +15,7 @@ import * as Haptics from 'expo-haptics';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useRevenueCat } from '@/context/RevenueCatContext';
 import PurchasesUI from 'react-native-purchases-ui';
+import { debugError } from '@/utils/debug';
 
 interface CustomerCenterProps {
   visible: boolean;
@@ -40,7 +41,7 @@ const CustomerCenter: React.FC<CustomerCenterProps> = ({ visible, onClose }) => 
       // The context will handle this automatically
       onClose();
     } catch (error: any) {
-      console.error('Customer Center error:', error);
+      debugError('revenueCat', 'Customer Center error:', error);
       Alert.alert('Error', error.message || 'Failed to open Customer Center');
     }
   };
@@ -64,7 +65,7 @@ const CustomerCenter: React.FC<CustomerCenterProps> = ({ visible, onClose }) => 
         Alert.alert('Restore Failed', result.error || 'No purchases found to restore.');
       }
     } catch (error: any) {
-      console.error('Restore error:', error);
+      debugError('revenueCat', 'Restore error:', error);
       Alert.alert('Error', error.message || 'Failed to restore purchases');
     } finally {
       setIsRestoring(false);
@@ -108,7 +109,7 @@ const CustomerCenter: React.FC<CustomerCenterProps> = ({ visible, onClose }) => 
         }
       }
     } catch (error: any) {
-      console.error('Error opening store subscription management:', error);
+      debugError('revenueCat', 'Error opening store subscription management:', error);
       Alert.alert(
         'Open Settings',
         Platform.OS === 'ios'
@@ -321,7 +322,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginTop: spacing.xl,
     padding: spacing.md,
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
   },
   infoContent: {

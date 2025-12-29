@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,8 +10,10 @@ import {
   ActivityIndicator,
   Platform,
   Modal,
+  AppState,
+  AppStateStatus,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,7 +31,14 @@ import { notificationService, NotificationSettings } from '@/services/notificati
 import { NOTIFICATION_MESSAGES } from '@/constants/notifications';
 import { SUPPORT_CONFIG } from '@/constants/support';
 import { useRevenueCat } from '@/context/RevenueCatContext';
+import { useNetwork } from '@/context/NetworkContext';
+import { syncAllData } from '@/services/syncService';
+import { debug, debugError, debugWarn } from '@/utils/debug';
 import * as Linking from 'expo-linking';
+import { clearAllCache, getCacheStats } from '@/services/cacheService';
+import { clearOfflineQuestions, getOfflineStorageInfo, getOfflineQuestionsCount, getOfflineModeEnabled, setOfflineModeEnabled } from '@/services/offlineStorageService';
+import { prefetchQuestionsForOffline } from '@/services/questionsService';
+import Constants from 'expo-constants';
 
 type IoniconsName = keyof typeof Ionicons.glyphMap;
 
@@ -90,6 +99,13 @@ export default function SettingsScreen() {
   // Use RevenueCat context for subscription status
   const { isPro: revenueCatIsPro, purchasePlan, isLoading: revenueCatLoading, restore, subscriptionStatus } = useRevenueCat();
   
+  // Use network context to check connectivity
+  const { isConnected, isInternetReachable } = useNetwork();
+  
+  // Developer tools state
+  const [devCacheStats, setDevCacheStats] = useState<any>(null);
+  const [devOfflineInfo, setDevOfflineInfo] = useState<any>(null);
+  
   // Fetch topics from Firestore
   const { topics: fetchedTopics, isLoading: topicsLoading, refetch: refetchTopics } = useTopics();
 
@@ -132,6 +148,15 @@ export default function SettingsScreen() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [showSubscriptionManager, setShowSubscriptionManager] = useState(false);
   const [showVerificationBanner, setShowVerificationBanner] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isSavingOffline, setIsSavingOffline] = useState(false);
+  const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
+  const [offlineInfo, setOfflineInfo] = useState<{
+    questionCount: number;
+    storageSize: number;
+    lastUpdated: number | null;
+    isExpired: boolean;
+  } | null>(null);
   
   // Lazy-loaded components for code splitting
   const { Component: PaywallComponent, isLoading: isLoadingPaywall } = useLazyComponent(
@@ -189,6 +214,41 @@ export default function SettingsScreen() {
     loadNotificationSettings();
   }, []);
 
+  // Load offline storage info - refresh when screen comes into focus
+  const loadOfflineInfo = useCallback(async () => {
+    const info = await getOfflineStorageInfo();
+    const wasEnabled = await getOfflineModeEnabled();
+    setOfflineInfo(info);
+    
+    // Always restore the offline mode state first (keep it enabled if it was enabled)
+    if (wasEnabled) {
+      setOfflineModeEnabled(true);
+    } else {
+      setOfflineModeEnabled(info.questionCount > 0 && !info.isExpired);
+    }
+    
+  }, []);
+
+  // Refresh offline info when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      loadOfflineInfo();
+    }, [loadOfflineInfo])
+  );
+
+  // Also refresh when app comes to foreground (in case offline questions were updated elsewhere)
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        loadOfflineInfo();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [loadOfflineInfo]);
+
   // Handle notification toggle
   const handleNotificationToggle = async (value: boolean) => {
     if (value) {
@@ -244,7 +304,7 @@ export default function SettingsScreen() {
         );
       }
     } catch (error) {
-      console.error('Error opening contact page:', error);
+      debugError('settings', 'Error opening contact page:', error);
       Alert.alert(
         'Contact Support',
         `Please visit: ${contactUrl}\n\nOr email us at: ${SUPPORT_CONFIG.email}`,
@@ -272,7 +332,7 @@ export default function SettingsScreen() {
               await signOut();
               router.replace('/');
             } catch (error) {
-              console.error('Logout error:', error);
+              debugError('auth', 'Logout error:', error);
               Alert.alert('Error', 'Failed to sign out. Please try again.');
             } finally {
               setIsLoggingOut(false);
@@ -335,7 +395,7 @@ export default function SettingsScreen() {
                         Alert.alert('Error', result.error || 'Failed to delete account. Please try again.');
                       }
                     } catch (error: any) {
-                      console.error('Delete account error:', error);
+                      debugError('auth', 'Delete account error:', error);
                       Alert.alert('Error', error.message || 'Failed to delete account. Please try again.');
                     } finally {
                       setIsDeletingAccount(false);
@@ -401,7 +461,7 @@ export default function SettingsScreen() {
         Alert.alert('Purchase Failed', result.error || 'Please try again.');
       }
     } catch (error: any) {
-      console.error('Purchase error:', error);
+      debugError('revenueCat', 'Purchase error:', error);
       Alert.alert('Error', error.message || 'Purchase failed. Please try again.');
     }
   };
@@ -432,10 +492,170 @@ export default function SettingsScreen() {
         Alert.alert('Restore Failed', result.error || 'No purchases found to restore.');
       }
     } catch (error: any) {
-      console.error('Restore error:', error);
+      debugError('revenueCat', 'Restore error:', error);
       Alert.alert('Error', error.message || 'Failed to restore purchases');
     } finally {
       setIsRestoring(false);
+    }
+  };
+
+  // Handle sync data
+  const handleSyncData = async () => {
+    // Check if online
+    if (!isConnected || isInternetReachable === false) {
+      Alert.alert(
+        'No Internet Connection',
+        'Please connect to the internet to sync your data.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    try {
+      setIsSyncing(true);
+      if (hapticFeedback) {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      
+      const result = await syncAllData();
+      
+      if (result.success) {
+        if (hapticFeedback) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        
+        const syncedItems = [];
+        if (result.synced.stats) syncedItems.push('Stats');
+        if (result.synced.questions) syncedItems.push('Questions');
+        if (result.synced.subscription) syncedItems.push('Subscription');
+        
+        Alert.alert(
+          'Sync Complete',
+          `Successfully synced: ${syncedItems.join(', ')}`,
+          [{ text: 'OK' }]
+        );
+      } else {
+        if (hapticFeedback) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        }
+        Alert.alert(
+          'Sync Failed',
+          result.errors.length > 0 
+            ? result.errors.join('\n')
+            : 'Failed to sync data. Please try again.',
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (error: any) {
+      debugError('sync', 'Sync error:', error);
+      if (hapticFeedback) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
+      Alert.alert('Error', error.message || 'Failed to sync data. Please try again.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleOfflineModeToggle = async (value: boolean) => {
+    if (value) {
+      // Turning on offline mode - check if expired and download questions
+      if (!isConnected || isInternetReachable === false) {
+        Alert.alert(
+          'No Internet Connection',
+          'Please connect to the internet to download questions for offline use.',
+          [{ text: 'OK' }]
+        );
+        setOfflineModeEnabled(false);
+        return;
+      }
+
+      // Check if questions are expired or missing
+      const currentInfo = await getOfflineStorageInfo();
+      const needsDownload = currentInfo.questionCount === 0 || currentInfo.isExpired;
+
+      if (needsDownload) {
+        // Clear expired questions if any
+        if (currentInfo.isExpired && currentInfo.questionCount > 0) {
+          await clearOfflineQuestions();
+        }
+
+        setIsSavingOffline(true);
+        try {
+          if (hapticFeedback) {
+            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          }
+
+          // Download 2000 questions for offline use (replace existing if expired)
+          const result = await prefetchQuestionsForOffline(2000, currentInfo.isExpired);
+          
+          // Refresh offline info after saving
+          const info = await getOfflineStorageInfo();
+          setOfflineInfo(info);
+          
+          if (result.success) {
+            setOfflineModeEnabled(true);
+            await setOfflineModeEnabled(true); // Persist state
+            if (hapticFeedback) {
+              await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
+            if (currentInfo.isExpired) {
+              Alert.alert(
+                'Questions Updated',
+                `Your offline questions have been refreshed. ${result.count} questions are now available offline.`,
+                [{ text: 'OK' }]
+              );
+            }
+          } else {
+            setOfflineModeEnabled(false);
+            if (hapticFeedback) {
+              await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            }
+            Alert.alert(
+              'Failed to Download Questions',
+              result.error || 'An unexpected error occurred. Please try again.',
+              [{ text: 'OK' }]
+            );
+          }
+        } catch (error: any) {
+          debugError('settings', 'Error downloading offline questions:', error);
+          setOfflineModeEnabled(false);
+          Alert.alert(
+            'Error',
+            error?.message || 'An unexpected error occurred while downloading questions.',
+            [{ text: 'OK' }]
+          );
+        } finally {
+          setIsSavingOffline(false);
+        }
+      } else {
+        // Questions are already available and not expired, just enable the mode
+        setOfflineModeEnabled(true);
+        if (hapticFeedback) {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+      }
+    } else {
+      // Turning off offline mode - delete questions from storage
+      try {
+        if (hapticFeedback) {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+        
+        await clearOfflineQuestions();
+        setOfflineModeEnabled(false);
+        await setOfflineModeEnabled(false); // Persist state
+        
+        // Refresh offline info to clear the count
+        const info = await getOfflineStorageInfo();
+        setOfflineInfo(info);
+      } catch (error: any) {
+        debugError('settings', 'Error clearing offline questions:', error);
+        setOfflineModeEnabled(false);
+        // Still refresh info even if clear failed
+        const info = await getOfflineStorageInfo();
+        setOfflineInfo(info);
+      }
     }
   };
 
@@ -474,7 +694,7 @@ export default function SettingsScreen() {
         }
       }
     } catch (error: any) {
-      console.error('Error opening store subscription management:', error);
+      debugError('revenueCat', 'Error opening store subscription management:', error);
       Alert.alert(
         'Open Settings',
         Platform.OS === 'ios'
@@ -495,7 +715,7 @@ export default function SettingsScreen() {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       }
     } catch (error) {
-      console.error('Error checking count:', error);
+      debugError('questions', 'Error checking count:', error);
     }
   };
 
@@ -1530,6 +1750,50 @@ export default function SettingsScreen() {
           </View>
         </Animated.View>
 
+        {/* Offline Mode Section */}
+        <Animated.View
+          entering={FadeInDown.duration(400).delay(425)}
+          style={styles.section}
+        >
+          <Text style={styles.sectionTitle}>Offline Mode</Text>
+          <Text style={styles.sectionSubtitle}>Download questions to practice without internet</Text>
+
+          <View style={styles.preferencesList}>
+            <View style={styles.preferenceItem}>
+              <View style={styles.preferenceInfo}>
+                <View style={styles.preferenceHeaderRow}>
+                  <Text style={styles.preferenceName}>Offline Mode</Text>
+                  {offlineModeEnabled && offlineInfo && offlineInfo.questionCount > 0 && !offlineInfo.isExpired && (
+                    <View style={styles.offlineBadge}>
+                      <Ionicons name="checkmark-circle" size={12} color={colors.primary} />
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.preferenceDescription}>
+                  {isSavingOffline 
+                    ? 'Downloading 2000 questions...'
+                    : offlineModeEnabled && offlineInfo && offlineInfo.questionCount > 0
+                      ? !offlineInfo.isExpired
+                        ? `${offlineInfo.questionCount} questions available`
+                        : 'Questions expired - toggle off and on to download again'
+                      : 'Download questions for offline practice'}
+                </Text>
+              </View>
+              {isSavingOffline ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Switch
+                  value={offlineModeEnabled}
+                  onValueChange={handleOfflineModeToggle}
+                  trackColor={{ false: colors.border, true: colors.primary + '50' }}
+                  thumbColor={offlineModeEnabled ? colors.primary : colors.textMuted}
+                  disabled={isSavingOffline || (!isConnected && !offlineModeEnabled)}
+                />
+              )}
+            </View>
+          </View>
+        </Animated.View>
+
         {/* Notifications Section */}
         <Animated.View
           entering={FadeInDown.duration(400).delay(450)}
@@ -1560,6 +1824,323 @@ export default function SettingsScreen() {
 
           </View>
         </Animated.View>
+
+        {/* Developer Tools Section - Only in Development */}
+        {__DEV__ && (
+          <Animated.View
+            entering={FadeInDown.duration(400).delay(475)}
+            style={styles.section}
+          >
+            <View style={styles.sectionTitleRow}>
+              <Ionicons name="code-slash-outline" size={18} color={colors.warning} />
+              <Text style={styles.sectionTitle}>Developer Tools</Text>
+            </View>
+            <Text style={styles.sectionSubtitle}>
+              Testing & debugging utilities
+            </Text>
+
+            <View style={styles.devToolsContainer}>
+              {/* App Info */}
+              <View style={styles.devStatCard}>
+                <Text style={styles.devStatLabel}>App Version</Text>
+                <Text style={styles.devStatValue}>{Constants.expoConfig?.version || '1.0.0'}</Text>
+                <Text style={styles.devStatLabel}>
+                  {Platform.OS} • {Constants.expoConfig?.sdkVersion || 'N/A'}
+                </Text>
+              </View>
+
+              {/* Network Status */}
+              <View style={styles.devStatCard}>
+                <Text style={styles.devStatLabel}>Network Status</Text>
+                <Text style={styles.devStatValue}>
+                  {isConnected ? '✓ Connected' : '✗ Offline'}
+                </Text>
+                <Text style={styles.devStatLabel}>
+                  Internet: {isInternetReachable ? 'Reachable' : 'Unreachable'}
+                </Text>
+              </View>
+
+
+              {/* Test Notification */}
+              <Pressable
+                style={styles.devButton}
+                onPress={async () => {
+                  if (hapticFeedback) {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  
+                  try {
+                    await notificationService.sendImmediateNotification(
+                      'Test Notification',
+                      'This is a test notification from Developer Tools'
+                    );
+                    Alert.alert('Success', 'Test notification sent!');
+                  } catch (error) {
+                    debugError('settings', 'Error sending test notification:', error);
+                    Alert.alert(
+                      'Error',
+                      'Failed to send notification. Make sure notifications are enabled.',
+                      [{ text: 'OK' }]
+                    );
+                  }
+                }}
+              >
+                <Ionicons name="notifications-outline" size={24} color={colors.primary} />
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>Test Notification</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    Send a test push notification
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+
+              {/* View Cache Stats */}
+              <Pressable
+                style={styles.devButton}
+                onPress={async () => {
+                  if (hapticFeedback) {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  
+                  try {
+                    const stats = await getCacheStats();
+                    setDevCacheStats(stats);
+                    const totalSize = stats.entries.reduce((sum, e) => sum + e.size, 0);
+                    const oldestAge = stats.entries.length > 0 
+                      ? Math.max(...stats.entries.map(e => e.age))
+                      : 0;
+                    const newestAge = stats.entries.length > 0
+                      ? Math.min(...stats.entries.map(e => e.age))
+                      : 0;
+                    
+                    Alert.alert(
+                      'Cache Statistics',
+                      `Total Entries: ${stats.totalEntries}\n` +
+                      `Total Size: ${(totalSize / 1024).toFixed(2)} KB\n` +
+                      `Oldest Entry: ${oldestAge > 0 ? `${Math.round(oldestAge / 1000 / 60)} min ago` : 'N/A'}\n` +
+                      `Newest Entry: ${newestAge > 0 ? `${Math.round(newestAge / 1000 / 60)} min ago` : 'N/A'}`,
+                      [{ text: 'OK' }]
+                    );
+                  } catch (error) {
+                    debugError('settings', 'Error getting cache stats:', error);
+                    Alert.alert('Error', 'Failed to get cache statistics.');
+                  }
+                }}
+              >
+                <Ionicons name="stats-chart-outline" size={24} color={colors.secondary} />
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>View Cache Stats</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    View cache statistics and info
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+
+              {/* View Offline Storage Info */}
+              <Pressable
+                style={styles.devButton}
+                onPress={async () => {
+                  if (hapticFeedback) {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  
+                  try {
+                    const info = await getOfflineStorageInfo();
+                    setDevOfflineInfo(info);
+                    Alert.alert(
+                      'Offline Storage Info',
+                      `Questions Stored: ${info.questionCount}\n` +
+                      `Storage Size: ${(info.storageSize / 1024).toFixed(2)} KB\n` +
+                      `Last Updated: ${info.lastUpdated ? new Date(info.lastUpdated).toLocaleString() : 'Never'}\n` +
+                      `Expires: ${info.isExpired ? 'Yes (expired)' : 'No'}`,
+                      [{ text: 'OK' }]
+                    );
+                  } catch (error) {
+                    debugError('settings', 'Error getting offline storage info:', error);
+                    Alert.alert('Error', 'Failed to get offline storage info.');
+                  }
+                }}
+              >
+                <Ionicons name="cloud-download-outline" size={24} color={colors.secondary} />
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>View Offline Storage</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    View offline questions storage info
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+
+              {/* Clear Cache */}
+              <Pressable
+                style={styles.devButton}
+                onPress={async () => {
+                  Alert.alert(
+                    'Clear Cache',
+                    'This will clear all cached data. Continue?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Clear',
+                        style: 'destructive',
+                        onPress: async () => {
+                          if (hapticFeedback) {
+                            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                          }
+                          
+                          try {
+                            await clearAllCache();
+                            Alert.alert('Success', 'Cache cleared successfully.');
+                          } catch (error) {
+                            debugError('settings', 'Error clearing cache:', error);
+                            Alert.alert('Error', 'Failed to clear cache.');
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+              >
+                <Ionicons name="trash-outline" size={24} color={colors.warning} />
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>Clear Cache</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    Clear all cached data
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+
+              {/* Clear Offline Storage */}
+              <Pressable
+                style={styles.devButton}
+                onPress={async () => {
+                  Alert.alert(
+                    'Clear Offline Storage',
+                    'This will clear all offline questions. Continue?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Clear',
+                        style: 'destructive',
+                        onPress: async () => {
+                          if (hapticFeedback) {
+                            await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                          }
+                          
+                          try {
+                            await clearOfflineQuestions();
+                            Alert.alert('Success', 'Offline storage cleared successfully.');
+                          } catch (error) {
+                            debugError('settings', 'Error clearing offline storage:', error);
+                            Alert.alert('Error', 'Failed to clear offline storage.');
+                          }
+                        },
+                      },
+                    ]
+                  );
+                }}
+              >
+                <Ionicons name="cloud-offline-outline" size={24} color={colors.warning} />
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>Clear Offline Storage</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    Clear all offline questions
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+
+              {/* Test Error Boundary */}
+              <Pressable
+                style={styles.devButton}
+                onPress={async () => {
+                  Alert.alert(
+                    'Test Error Boundary',
+                    'This will trigger an error to test the Error Boundary component.',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Trigger Error',
+                        onPress: () => {
+                          // This will be caught by Error Boundary
+                          throw new Error('Test error from Developer Tools');
+                        },
+                      },
+                    ]
+                  );
+                }}
+              >
+                <Ionicons name="bug-outline" size={24} color={colors.warning} />
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>Test Error Boundary</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    Trigger a test error to test Error Boundary
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+
+              {/* Test Haptic Feedback */}
+              <Pressable
+                style={styles.devButton}
+                onPress={async () => {
+                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setTimeout(async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  }, 200);
+                  setTimeout(async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                  }, 400);
+                  setTimeout(async () => {
+                    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  }, 600);
+                  setTimeout(async () => {
+                    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                  }, 800);
+                  setTimeout(async () => {
+                    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                  }, 1000);
+                  Alert.alert('Haptic Test', 'Playing all haptic feedback types...');
+                }}
+              >
+                <Ionicons name="phone-portrait-outline" size={24} color={colors.secondary} />
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>Test Haptic Feedback</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    Test all haptic feedback types
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+
+              {/* Save Offline Questions */}
+              <Pressable
+                style={[
+                  styles.devButton,
+                  (!isConnected || isInternetReachable === false) && styles.devButtonDisabled
+                ]}
+                onPress={() => handleOfflineModeToggle(true)}
+                disabled={isSavingOffline || !isConnected || isInternetReachable === false}
+              >
+                {isSavingOffline ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Ionicons name="cloud-download-outline" size={24} color={colors.secondary} />
+                )}
+                <View style={styles.devButtonContent}>
+                  <Text style={styles.devButtonText}>Save Offline Questions</Text>
+                  <Text style={styles.devButtonSubtext}>
+                    Download questions for offline use
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+              </Pressable>
+            </View>
+          </Animated.View>
+        )}
 
         {/* Help & Support Section */}
         <Animated.View
@@ -1700,6 +2281,32 @@ export default function SettingsScreen() {
             </Pressable>
           </Animated.View>
         )}
+
+        {/* Sync Data - Minimalist */}
+        {isAuthenticated && (
+          <Animated.View
+            entering={FadeInDown.duration(400).delay(750)}
+            style={styles.restorePurchasesContainer}
+          >
+            <Pressable
+              style={[
+                styles.restorePurchasesButton,
+                (!isConnected || isInternetReachable === false) && styles.restorePurchasesButtonDisabled
+              ]}
+              onPress={handleSyncData}
+              disabled={isSyncing || !isConnected || isInternetReachable === false}
+            >
+              {isSyncing ? (
+                <ActivityIndicator size="small" color={colors.textMuted} />
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                  <Ionicons name="sync-outline" size={16} color={colors.textMuted} />
+                  <Text style={styles.restorePurchasesText}>Sync Data</Text>
+                </View>
+              )}
+            </Pressable>
+          </Animated.View>
+        )}
       </ScrollView>
 
       {/* Paywall Modal - Lazy Loaded */}
@@ -1734,18 +2341,18 @@ const styles = StyleSheet.create({
   accountCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.card,
-    borderRadius: borderRadius.xl,
-    padding: spacing.lg,
+    backgroundColor: colors.cardSubtle,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
     gap: spacing.md,
   },
   accountAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: colors.backgroundSecondary,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1767,11 +2374,13 @@ const styles = StyleSheet.create({
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.incorrect + '15',
+    backgroundColor: 'rgba(255, 77, 106, 0.1)',
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
     gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 77, 106, 0.2)',
   },
   logoutText: {
     fontSize: typography.fontSize.sm,
@@ -1781,11 +2390,13 @@ const styles = StyleSheet.create({
   signInButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.primaryGlow,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
     gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   signInText: {
     fontSize: typography.fontSize.sm,
@@ -1801,9 +2412,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(255, 77, 106, 0.08)',
     borderWidth: 1,
-    borderColor: colors.incorrect + '40',
+    borderColor: 'rgba(255, 77, 106, 0.3)',
     borderRadius: borderRadius.md,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
@@ -1828,10 +2439,9 @@ const styles = StyleSheet.create({
   },
   headerLeft: {},
   headerTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     color: colors.textPrimary,
-    letterSpacing: -0.3,
   },
   headerSubtitle: {
     fontSize: typography.fontSize.xs,
@@ -1839,12 +2449,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'transparent',
+    width: 40,
+    height: 40,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   scrollView: {
     flex: 1,
@@ -1866,7 +2478,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   sectionTitleContainer: {
     flexDirection: 'row',
@@ -2001,12 +2613,12 @@ const styles = StyleSheet.create({
   topicChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
     gap: spacing.xs,
   },
   lockedChip: {
@@ -2030,11 +2642,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   difficultyCard: {
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
   },
   difficultyHeader: {
     flexDirection: 'row',
@@ -2066,15 +2678,15 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   categoryCard: {
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderSubtle,
   },
   categoryCardSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primary + '10',
+    borderColor: 'rgba(0, 255, 148, 0.4)',
+    backgroundColor: 'rgba(0, 255, 148, 0.08)',
   },
   categoryHeader: {
     flexDirection: 'row',
@@ -2085,9 +2697,9 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: borderRadius.sm,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderSubtle,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2149,15 +2761,15 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   statusFilterCard: {
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
-    borderWidth: 2,
-    borderColor: colors.border,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   statusFilterCardSelected: {
-    backgroundColor: colors.primary + '15',
-    borderColor: colors.primary,
+    backgroundColor: 'rgba(0, 255, 148, 0.08)',
+    borderColor: 'rgba(0, 255, 148, 0.4)',
   },
   statusFilterHeader: {
     flexDirection: 'row',
@@ -2243,10 +2855,12 @@ const styles = StyleSheet.create({
   preferenceItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   preferenceInfo: {
     flex: 1,
@@ -2260,6 +2874,29 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.xs,
     color: colors.textMuted,
     marginTop: 2,
+  },
+  preferenceItemDisabled: {
+    opacity: 0.5,
+  },
+  preferenceHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  // Offline Mode
+  offlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.primary + '15',
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    borderRadius: borderRadius.sm,
+  },
+  offlineBadgeText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '600',
+    color: colors.primary,
   },
   testNotificationButton: {
     flexDirection: 'row',
@@ -2286,17 +2923,19 @@ const styles = StyleSheet.create({
   supportButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
     gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   supportButtonIcon: {
     width: 36,
     height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.primary + '10',
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2315,10 +2954,12 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   supportInfoCard: {
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   supportInfoRow: {
     flexDirection: 'row',
@@ -2399,13 +3040,13 @@ const styles = StyleSheet.create({
   },
   startButton: {
     backgroundColor: colors.primary,
-    borderRadius: borderRadius.lg,
-    paddingVertical: spacing.lg,
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.md,
     alignItems: 'center',
   },
   startButtonText: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: '800',
+    fontSize: typography.fontSize.base,
+    fontWeight: '600',
     color: colors.textInverse,
   },
   startButtonSubtext: {
@@ -2415,30 +3056,30 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   proCard: {
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderSubtle,
   },
   proMemberCard: {
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(0, 255, 148, 0.08)',
     borderRadius: borderRadius.md,
     padding: spacing.md,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: colors.primary + '30',
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   proIconContainer: {
     width: 36,
     height: 36,
     borderRadius: borderRadius.sm,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(0, 255, 148, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: spacing.sm,
@@ -2522,6 +3163,9 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textDecorationLine: 'underline',
   },
+  restorePurchasesButtonDisabled: {
+    opacity: 0.5,
+  },
   legalLinksList: {
     marginTop: spacing.md,
     gap: spacing.xs,
@@ -2529,11 +3173,13 @@ const styles = StyleSheet.create({
   legalLinkItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
     gap: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   legalLinkText: {
     flex: 1,

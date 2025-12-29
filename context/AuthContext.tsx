@@ -7,6 +7,7 @@ import {
   signInWithCredential,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  sendPasswordResetEmail as firebaseSendPasswordResetEmail,
   OAuthProvider,
   PhoneAuthProvider,
   signInWithPhoneNumber,
@@ -39,6 +40,7 @@ interface AuthContextType {
   // Email auth
   signUpWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   signInWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  sendPasswordResetEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
   
   // Phone auth
   sendPhoneVerification: (phoneNumber: string) => Promise<ConfirmationResult | null>;
@@ -82,10 +84,19 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     debug('auth', 'Subscribing to onAuthStateChanged...');
     
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       debug('auth', 'Auth state changed!');
       if (user) {
         debugSuccess('auth', 'User logged in:', user.email || user.uid);
+        
+        // Validate and refresh token on auth state change
+        try {
+          await user.reload();
+          debug('auth', 'User token validated successfully');
+        } catch (error) {
+          debugError('auth', 'Error validating user token:', error);
+          // Token might be expired, but Firebase will handle it
+        }
       } else {
         debug('auth', 'No user (logged out or not persisted)');
       }
@@ -101,7 +112,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       await firebaseSignOut(auth);
     } catch (error) {
-      console.error('Sign out error:', error);
+      debugError('auth', 'Sign out error:', error);
       throw error;
     }
   };
@@ -180,7 +191,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       return { success: true };
     } catch (error: any) {
-      console.error('Email sign up error:', error);
+      debugError('auth', 'Email sign up error:', error);
       
       // Record failed attempt for rate limiting
       const normalizedEmail = email.toLowerCase().trim();
@@ -236,7 +247,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       return { success: true };
     } catch (error: any) {
-      console.error('Email sign in error:', error);
+      debugError('auth', 'Email sign in error:', error);
       
       // Record failed attempt for rate limiting
       const normalizedEmail = email.toLowerCase().trim();
@@ -271,16 +282,50 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  // Send Password Reset Email
+  const sendPasswordResetEmail = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const normalizedEmail = email.toLowerCase().trim();
+      
+      // Basic email validation
+      if (!normalizedEmail || !normalizedEmail.includes('@')) {
+        return { success: false, error: 'Please enter a valid email address.' };
+      }
+
+      await firebaseSendPasswordResetEmail(auth, normalizedEmail);
+      debugSuccess('auth', 'Password reset email sent to:', normalizedEmail);
+      
+      return { success: true };
+    } catch (error: any) {
+      debugError('auth', 'Password reset error:', error);
+      
+      // Parse Firebase error codes to user-friendly messages
+      let errorMessage = 'Failed to send reset email. Please try again.';
+      if (error.code === 'auth/user-not-found') {
+        // Don't reveal if user exists - security best practice
+        // Still return success to prevent email enumeration
+        debug('auth', 'User not found, but returning success for security');
+        return { success: true };
+      } else if (error.code === 'auth/invalid-email') {
+        errorMessage = 'Please enter a valid email address.';
+      } else if (error.code === 'auth/too-many-requests') {
+        errorMessage = 'Too many requests. Please try again later.';
+      }
+      
+      return { success: false, error: errorMessage };
+    }
+  };
+
   // Phone Authentication - Send verification code
   const sendPhoneVerification = async (phoneNumber: string): Promise<ConfirmationResult | null> => {
     try {
       // Note: For React Native, you'll need to use @react-native-firebase/auth
       // This is a placeholder for the web SDK approach
       // In production, use react-native-firebase for better phone auth support
-      console.log('Phone verification would be sent to:', phoneNumber);
+      debug('auth', 'Phone verification would be sent to:', phoneNumber);
       return null;
     } catch (error) {
-      console.error('Phone verification error:', error);
+      debugError('auth', 'Phone verification error:', error);
       throw error;
     }
   };
@@ -294,7 +339,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await confirmation.confirm(code);
       return true;
     } catch (error) {
-      console.error('Phone code confirmation error:', error);
+      debugError('auth', 'Phone code confirmation error:', error);
       return false;
     }
   };
@@ -306,7 +351,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await signInWithCredential(auth, credential);
       return true;
     } catch (error) {
-      console.error('GitHub sign in error:', error);
+      debugError('auth', 'GitHub sign in error:', error);
       return false;
     }
   };
@@ -325,7 +370,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await signInWithCredential(auth, credential);
       return true;
     } catch (error) {
-      console.error('Apple sign in error:', error);
+      debugError('auth', 'Apple sign in error:', error);
       return false;
     }
   };
@@ -340,6 +385,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         deleteAccount,
         signUpWithEmail,
         signInWithEmail,
+        sendPasswordResetEmail,
         sendPhoneVerification,
         confirmPhoneCode,
         signInWithGitHubCredential,

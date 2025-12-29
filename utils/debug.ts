@@ -6,22 +6,25 @@
  */
 
 // Master switch - set to false to disable all debug logging
-const DEBUG_ENABLED = false;
+const DEBUG_ENABLED = true;
 
 // Category toggles - enable/disable specific debug areas
 const DEBUG_CATEGORIES = {
   auth: true,        // Authentication & login flow
   firebase: true,    // Firebase operations
   settings: true,    // Settings persistence
-  navigation: true,  // Screen navigation
+  navigation: false,  // Screen navigation
   questions: true,   // Question loading & filtering
-  storage: true,     // AsyncStorage operations
-  api: true,         // API calls
-  ui: true,          // UI state changes
-  revenueCat: true,   // RevenueCat operations
-  feed: false,         // Feed operations
+  storage: false,     // AsyncStorage operations
+  api: false,         // API calls
+  ui: false,          // UI state changes
+  revenueCat: false,   // RevenueCat operations
+  feed: true,         // Feed operations
   cache: true,       // Cache operations (hits, misses, writes)
   stats: false,       // User stats operations
+  network: true,     // Network connectivity & offline mode
+  sync: true,        // Data synchronization operations
+  offline: true,     // Offline storage operations
 };
 
 type DebugCategory = keyof typeof DEBUG_CATEGORIES;
@@ -40,6 +43,9 @@ const CATEGORY_EMOJIS: Record<DebugCategory, string> = {
   feed: '🔄',
   cache: '💾',
   stats: '📊',
+  network: '📡',
+  sync: '🔄',
+  offline: '💾',
 };
 
 /**

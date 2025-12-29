@@ -13,6 +13,7 @@ import {
 import { db } from '@/config/firebase';
 import { sanitizeUserProfile } from '@/utils/sanitize';
 import { validateUserProfile, ValidationError } from '@/utils/validateProfile';
+import { debug, debugError } from '@/utils/debug';
 
 // Export ValidationError for use in components
 export { ValidationError };
@@ -54,14 +55,14 @@ export const saveUserProfile = async (
       updatedAt: new Date().toISOString(),
     }, { merge: true });
     if (__DEV__) {
-      console.log('User profile saved successfully');
+      debug('firebase', 'User profile saved successfully');
     }
   } catch (error) {
     // Re-throw validation errors as-is
     if (error instanceof ValidationError) {
       throw error;
     }
-    console.error('Error saving user profile:', error);
+    debugError('firebase', 'Error saving user profile:', error);
     throw error;
   }
 };
@@ -79,7 +80,7 @@ export const getUserProfile = async (userId: string): Promise<UserProfile | null
     }
     return null;
   } catch (error) {
-    console.error('Error getting user profile:', error);
+    debugError('firebase', 'Error getting user profile:', error);
     throw error;
   }
 };
@@ -92,7 +93,7 @@ export const hasCompletedOnboarding = async (userId: string): Promise<boolean> =
     const profile = await getUserProfile(userId);
     return profile?.onboardingCompleted === true;
   } catch (error) {
-    console.error('Error checking onboarding status:', error);
+    debugError('firebase', 'Error checking onboarding status:', error);
     return false;
   }
 };
@@ -119,14 +120,14 @@ export const updateUserProfile = async (
       updatedAt: new Date().toISOString(),
     });
     if (__DEV__) {
-      console.log('User profile updated successfully');
+      debug('firebase', 'User profile updated successfully');
     }
   } catch (error) {
     // Re-throw validation errors as-is
     if (error instanceof ValidationError) {
       throw error;
     }
-    console.error('Error updating user profile:', error);
+    debugError('firebase', 'Error updating user profile:', error);
     throw error;
   }
 };
@@ -137,19 +138,19 @@ export const updateUserProfile = async (
  */
 export const deleteUserData = async (userId: string): Promise<void> => {
   try {
-    console.log(`Deleting all data for user: ${userId}`);
+    debug('firebase', `Deleting all data for user: ${userId}`);
     
     // Delete user profile
     const userRef = doc(db, 'users', userId);
     await deleteDoc(userRef);
-    console.log('User profile deleted');
+    debug('firebase', 'User profile deleted');
     
     // Delete user stats
     const userStatsRef = doc(db, 'userStats', userId);
     const userStatsSnap = await getDoc(userStatsRef);
     if (userStatsSnap.exists()) {
       await deleteDoc(userStatsRef);
-      console.log('User stats deleted');
+      debug('firebase', 'User stats deleted');
     }
     
     // Delete user activities from internal collection (if it exists)
@@ -165,15 +166,15 @@ export const deleteUserData = async (userId: string): Promise<void> => {
       });
       
       await Promise.all(deletePromises);
-      console.log(`Deleted ${activitiesSnap.docs.length} internal user activities`);
+      debug('firebase', `Deleted ${activitiesSnap.docs.length} internal user activities`);
     } catch (error) {
       // Internal activities collection may not exist yet - that's okay
-      console.log('No internal activities to delete (collection may not exist)');
+      debug('firebase', 'No internal activities to delete (collection may not exist)');
     }
     
-    console.log('All user data deleted successfully');
+    debug('firebase', 'All user data deleted successfully');
   } catch (error) {
-    console.error('Error deleting user data:', error);
+    debugError('firebase', 'Error deleting user data:', error);
     throw error;
   }
 };

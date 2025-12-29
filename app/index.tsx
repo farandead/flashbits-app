@@ -13,6 +13,7 @@ import {
   Image,
   LayoutAnimation,
   UIManager,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
@@ -32,14 +33,16 @@ let GoogleSignin: any = null;
 try {
   GoogleSignin = require('@react-native-google-signin/google-signin').GoogleSignin;
 } catch (error) {
-  console.warn('⚠️ Google Sign-In not available (requires development build, not Expo Go)');
+  if (__DEV__) {
+    debugWarn('auth', 'Google Sign-In not available (requires development build, not Expo Go)');
+  }
 }
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { hasCompletedOnboarding } from '@/services/userService';
-import SignInLoadingScreen from '@/components/SignInLoadingScreen';
-import { debug, debugSuccess } from '@/utils/debug';
+// SignInLoadingScreen removed - using InteractiveLoadingOverlay on destination screens instead
+import { debug, debugSuccess, debugError, debugWarn } from '@/utils/debug';
 
 // Required for web browser auth to work properly
 WebBrowser.maybeCompleteAuthSession();
@@ -49,7 +52,9 @@ WebBrowser.maybeCompleteAuthSession();
 const GITHUB_CLIENT_ID = process.env.EXPO_PUBLIC_GITHUB_CLIENT_ID;
 
 if (!GITHUB_CLIENT_ID) {
-  console.warn('⚠️ EXPO_PUBLIC_GITHUB_CLIENT_ID not set. GitHub sign-in will not work.');
+  if (__DEV__) {
+    debugWarn('auth', 'EXPO_PUBLIC_GITHUB_CLIENT_ID not set. GitHub sign-in will not work.');
+  }
 }
 
 // Manual GitHub OAuth discovery (GitHub doesn't support auto-discovery)
@@ -65,7 +70,7 @@ const GOOGLE_WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-type AuthStep = 'choose' | 'email-input' | 'verify-email';
+type AuthStep = 'choose' | 'email-input' | 'verify-email' | 'forgot-password' | 'forgot-password-confirmation';
 
 // Password strength calculation
 type PasswordStrength = 'weak' | 'fair' | 'good' | 'strong';
@@ -113,7 +118,7 @@ const getStrengthLabel = (strength: PasswordStrength): string => {
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { user, isAuthenticated, isLoading: authLoading, signUpWithEmail, signInWithEmail, signInWithGitHubCredential } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading, signUpWithEmail, signInWithEmail, sendPasswordResetEmail, signInWithGitHubCredential } = useAuth();
 
   // State declarations
   const [authStep, setAuthStep] = useState<AuthStep>('choose');
@@ -121,12 +126,13 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [showSignInLoading, setShowSignInLoading] = useState(false);
+  // Removed showSignInLoading - navigation happens immediately now
   const [appleAuthAvailable, setAppleAuthAvailable] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [isRedirecting, setIsRedirecting] = useState(false); // Prevent double redirects
   const [isCheckingVerification, setIsCheckingVerification] = useState(false);
   const [verificationEmail, setVerificationEmail] = useState(''); // Store email for verification screen
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState(''); // Store email for forgot password
 
   // Configure Google Sign-In on mount
   useEffect(() => {
@@ -139,7 +145,7 @@ export default function LoginScreen() {
         offlineAccess: false,
       });
     } catch (error) {
-      console.warn('⚠️ Failed to configure Google Sign-In:', error);
+      debugWarn('auth', 'Failed to configure Google Sign-In:', error);
     }
   }, []);
 
@@ -153,12 +159,16 @@ export default function LoginScreen() {
   
   // Debug: Log redirect URI
   useEffect(() => {
-    console.log('🔗 GitHub OAuth Redirect URI:', redirectUri);
-    console.log('👆 Set this EXACTLY in your GitHub OAuth App → Authorization callback URL');
-    console.log('💡 Should be: flashbits://auth');
+    if (__DEV__) {
+      debug('auth', 'GitHub OAuth Redirect URI:', redirectUri);
+      debug('auth', 'Set this EXACTLY in your GitHub OAuth App → Authorization callback URL');
+      debug('auth', 'Should be: flashbits://auth');
+    }
     if (!redirectUri.startsWith('flashbits://')) {
-      console.warn('⚠️ WARNING: Redirect URI is not using flashbits:// scheme!');
-      console.warn('⚠️ This will fail in GitHub OAuth. Make sure you are using a development build, not Expo Go.');
+      if (__DEV__) {
+        debugWarn('auth', 'WARNING: Redirect URI is not using flashbits:// scheme!');
+        debugWarn('auth', 'This will fail in GitHub OAuth. Make sure you are using a development build, not Expo Go.');
+      }
     }
   }, [redirectUri]);
   
@@ -176,7 +186,7 @@ export default function LoginScreen() {
 
   // Redirect to home if user is already authenticated (on app launch only)
   // This effect should ONLY redirect when the app launches with a persisted user
-  // It should NOT redirect during an active login flow (when isLoading or showSignInLoading is true)
+      // It should NOT redirect during an active login flow (when isLoading is true)
   useEffect(() => {
     const checkAuthAndRedirect = async () => {
       debug('navigation', 'Checking auth state...', { 
@@ -185,7 +195,6 @@ export default function LoginScreen() {
         user: user?.email, 
         isRedirecting,
         isLoading,
-        showSignInLoading 
       });
       
       if (authLoading) {
@@ -195,7 +204,7 @@ export default function LoginScreen() {
 
       // If a login is in progress, don't redirect from here
       // Let the login handler do its own redirect
-      if (isLoading || showSignInLoading || isRedirecting) {
+      if (isLoading || isRedirecting) {
         debug('navigation', 'Login in progress, skipping useEffect redirect');
         setCheckingAuth(false);
         return;
@@ -220,13 +229,9 @@ export default function LoginScreen() {
         // User is logged in and verified, check if they completed onboarding
         const completedOnboarding = await hasCompletedOnboarding(user.uid);
         
-        if (completedOnboarding) {
-          debugSuccess('navigation', 'Onboarding complete, redirecting to home...');
-          router.replace('/home');
-        } else {
-          debug('navigation', 'Needs onboarding, redirecting...');
-          router.replace('/onboarding');
-        }
+        // Navigate to loading screen - it will load data and navigate to home/onboarding
+        debugSuccess('navigation', 'User authenticated, redirecting to loading screen...');
+        router.replace('/loading');
       } else {
         debug('navigation', 'No authenticated user, showing login screen');
         setCheckingAuth(false);
@@ -234,7 +239,7 @@ export default function LoginScreen() {
     };
 
     checkAuthAndRedirect();
-  }, [isAuthenticated, authLoading, user, router, isRedirecting, isLoading, showSignInLoading]);
+  }, [isAuthenticated, authLoading, user, router, isRedirecting, isLoading]);
 
   // Handle GitHub OAuth response
   useEffect(() => {
@@ -261,26 +266,64 @@ export default function LoginScreen() {
         throw new Error('EXPO_PUBLIC_CLOUD_FUNCTION_URL is not set');
       }
       
+      // Add timeout to fetch request (60 seconds)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000);
+      
       const response = await fetch(CLOUD_FUNCTION_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ code }),
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
 
-      const data = await response.json() as {
+      // Check if response is OK and has JSON content
+      if (!response.ok) {
+        const errorText = await response.text();
+        debugError('auth', 'GitHub auth server error:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText,
+        });
+        throw new Error(`Server error: ${response.status} ${response.statusText}`);
+      }
+
+      // Check content type before parsing
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const errorText = await response.text();
+        debugError('auth', 'GitHub auth non-JSON response:', errorText);
+        throw new Error('Server returned non-JSON response');
+      }
+
+      // Parse JSON response
+      let data: {
         customToken?: string;
         user?: { uid: string };
         error?: string;
       };
+      
+      try {
+        const responseText = await response.text();
+        if (!responseText || responseText.trim() === '') {
+          throw new Error('Empty response from server');
+        }
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        debugError('auth', 'GitHub auth JSON parse error:', parseError);
+        throw new Error('Failed to parse server response');
+      }
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to authenticate');
+      if (data.error) {
+        throw new Error(data.error);
       }
 
       if (!data.customToken || !data.user) {
-        throw new Error('Invalid response from server');
+        throw new Error('Invalid response from server: missing customToken or user');
       }
 
       // Sign in to Firebase with the custom token
@@ -294,23 +337,18 @@ export default function LoginScreen() {
       // Prevent useEffect from also redirecting
       setIsRedirecting(true);
       
-      // Show the fun loading screen
+      // Navigate immediately - loading will happen on destination screen
       setIsLoading(false);
-      setShowSignInLoading(true);
       
-      // Check if new user needs onboarding
+      // Check if new user needs onboarding (in background)
       const hasOnboarded = await hasCompletedOnboarding(data.user.uid);
       
-      // Small delay to show the loading screen
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Navigate based on onboarding status
-      const targetRoute = hasOnboarded ? '/home' : '/onboarding';
-      debug('navigation', 'Navigating to:', targetRoute);
-      router.replace(targetRoute);
+        // Navigate to loading screen - it will load data and navigate to home/onboarding
+        debug('navigation', 'Navigating to loading screen...');
+        router.replace('/loading');
       
     } catch (error: any) {
-      console.error('GitHub auth error:', error);
+      debugError('auth', 'GitHub auth error:', error);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert('Error', error.message || 'Failed to complete GitHub sign in.');
       setIsLoading(false);
@@ -365,26 +403,19 @@ export default function LoginScreen() {
       // Prevent useEffect from also redirecting
       setIsRedirecting(true);
 
-      // Show the fun loading screen
+      // Navigate immediately - loading will happen on destination screen
       setIsLoading(false);
-      setShowSignInLoading(true);
 
-      // Check if new user needs onboarding
+      // Check if new user needs onboarding (in background)
       const user = auth.currentUser;
       if (user) {
         const hasOnboarded = await hasCompletedOnboarding(user.uid);
         
-        // Small delay to show the loading screen
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        if (hasOnboarded) {
-          router.replace('/home');
-        } else {
-          router.replace('/onboarding');
-        }
+        // Navigate to loading screen - it will load data and navigate to home/onboarding
+        router.replace('/loading');
       }
     } catch (error: any) {
-      console.error('Apple auth error:', error);
+      debugError('auth', 'Apple auth error:', error);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       
       if (error.code === 'ERR_CANCELED') {
@@ -435,7 +466,7 @@ export default function LoginScreen() {
       
       await promptAsync();
     } catch (error) {
-      console.error('GitHub sign in error:', error);
+      debugError('auth', 'GitHub sign in error:', error);
       Alert.alert('Error', 'GitHub sign in failed. Please try again.');
     } finally {
       setIsLoading(false);
@@ -504,26 +535,19 @@ export default function LoginScreen() {
       // Prevent useEffect from also redirecting
       setIsRedirecting(true);
 
-      // Show the fun loading screen
+      // Navigate immediately - loading will happen on destination screen
       setIsLoading(false);
-      setShowSignInLoading(true);
 
-      // Check if new user needs onboarding
+      // Check if new user needs onboarding (in background)
       const user = auth.currentUser;
       if (user) {
         const hasOnboarded = await hasCompletedOnboarding(user.uid);
         
-        // Small delay to show the loading screen
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        if (hasOnboarded) {
-          router.replace('/home');
-        } else {
-          router.replace('/onboarding');
-        }
+        // Navigate to loading screen first - it will load data and then navigate to home/onboarding
+        router.replace('/loading');
       }
     } catch (error: any) {
-      console.error('Google sign in error:', error);
+      debugError('auth', 'Google sign in error:', error);
       
       // Handle user cancellation gracefully
       if (error.code === 'SIGN_IN_CANCELLED' || error.code === '10') {
@@ -598,7 +622,7 @@ export default function LoginScreen() {
               return; // Don't proceed to onboarding until verified
             }
           } catch (error) {
-            console.error('Failed to send verification email:', error);
+            debugError('auth', 'Failed to send verification email:', error);
             // Show verification screen anyway - they can resend
             setVerificationEmail(email);
             setIsLoading(false);
@@ -625,23 +649,15 @@ export default function LoginScreen() {
         // Prevent useEffect from also redirecting
         setIsRedirecting(true);
         
-        // Show the fun loading screen
+        // Navigate immediately - loading will happen on destination screen
         setIsLoading(false);
-        setShowSignInLoading(true);
         
-        // Small delay to show the loading screen
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        // Check if user needs onboarding
+        // Check if user needs onboarding (in background)
         const { auth } = await import('@/config/firebase');
         const currentUser = auth.currentUser;
         if (currentUser) {
-          const hasOnboarded = await hasCompletedOnboarding(currentUser.uid);
-          if (hasOnboarded) {
-            router.replace('/home');
-          } else {
-            router.replace('/onboarding');
-          }
+          // Navigate to loading screen - it will load data and navigate to home/onboarding
+          router.replace('/loading');
         }
       } else {
         Alert.alert('Error', result.error || 'Authentication failed.');
@@ -681,13 +697,9 @@ export default function LoginScreen() {
           // Prevent useEffect from also redirecting
           setIsRedirecting(true);
           setIsCheckingVerification(false);
-          setShowSignInLoading(true);
           
-          // Small delay to show the loading screen
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          
-          // Proceed to onboarding
-          router.replace('/onboarding');
+          // Navigate to loading screen - it will load data and navigate to onboarding
+          router.replace('/loading');
         } else {
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           Alert.alert(
@@ -699,7 +711,7 @@ export default function LoginScreen() {
         }
       }
     } catch (error) {
-      console.error('Error checking verification:', error);
+      debugError('auth', 'Error checking verification:', error);
       setIsCheckingVerification(false);
       Alert.alert('Error', 'Failed to check verification status. Please try again.');
     }
@@ -721,7 +733,7 @@ export default function LoginScreen() {
         Alert.alert('Email Sent', 'A new verification link has been sent to your email.');
       }
     } catch (error: any) {
-      console.error('Error resending verification:', error);
+      debugError('auth', 'Error resending verification:', error);
       if (error?.code === 'auth/too-many-requests') {
         Alert.alert('Too many requests', 'Please wait a few minutes before requesting another email.');
       } else {
@@ -745,7 +757,7 @@ export default function LoginScreen() {
       setPassword('');
       setVerificationEmail('');
     } catch (error) {
-      console.error('Error signing out:', error);
+      debugError('auth', 'Error signing out:', error);
     }
   };
 
@@ -838,10 +850,10 @@ export default function LoginScreen() {
       </Pressable>
 
       <Text style={styles.phoneTitle}>
-        {isSignUp ? 'Create your account' : 'Welcome back'}
+        {isSignUp ? 'Create account' : 'Welcome back'}
       </Text>
       <Text style={styles.phoneSubtitle}>
-        {isSignUp ? 'Enter your email and create a password' : 'Sign in to continue'}
+        {isSignUp ? 'Enter your email and password' : 'Sign in to continue'}
       </Text>
 
       <View style={styles.emailInputContainer}>
@@ -919,6 +931,20 @@ export default function LoginScreen() {
         })()}
       </View>
 
+      {/* Forgot Password Link - Only show when signing in */}
+      {!isSignUp && (
+        <Pressable 
+          style={styles.forgotPasswordLink}
+          onPress={() => {
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+            setForgotPasswordEmail(email); // Pre-fill with current email if available
+            setAuthStep('forgot-password');
+          }}
+        >
+          <Text style={styles.forgotPasswordLinkText}>Forgot Password?</Text>
+        </Pressable>
+      )}
+
       <Pressable
         style={[
           styles.submitButton, 
@@ -967,9 +993,11 @@ export default function LoginScreen() {
             resizeMode="contain"
           />
         </View>
-        <Text style={styles.appName}>flashbits</Text>
+        <Text style={styles.appName}>
+          <Text style={styles.appNameAccent}>flash</Text>bits
+        </Text>
         <Text style={styles.tagline}>
-          Master coding interviews{'\n'}one swipe at a time
+          Master coding interviews, one swipe at a time
         </Text>
       </View>
 
@@ -1039,18 +1067,134 @@ export default function LoginScreen() {
       <View style={styles.termsContainer}>
         <Text style={styles.termsText}>
           By continuing, you agree to our{' '}
-          <Text style={styles.termsLink}>Terms of Service</Text>
+          <Text 
+            style={styles.termsLink}
+            onPress={() => Linking.openURL('https://flashbits.co/terms')}
+          >
+            Terms of Service
+          </Text>
           {' '}and{' '}
-          <Text style={styles.termsLink}>Privacy Policy</Text>
+          <Text 
+            style={styles.termsLink}
+            onPress={() => Linking.openURL('https://flashbits.co/privacy')}
+          >
+            Privacy Policy
+          </Text>
         </Text>
       </View>
     </View>
   );
 
-  // Show loading screen during sign-in
-  if (showSignInLoading) {
-    return <SignInLoadingScreen message="Signing in" />;
-  }
+  // Note: Removed showSignInLoading - navigation happens immediately now
+  // Loading overlay is shown on destination screens (home/onboarding)
+
+  // Render forgot password input step
+  const renderForgotPassword = () => (
+    <View style={styles.phoneContainer}>
+      <Pressable 
+        style={styles.backButton}
+        onPress={() => {
+          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+          setAuthStep('email-input');
+          setForgotPasswordEmail('');
+        }}
+      >
+        <View style={styles.backButtonContent}>
+          <Ionicons name="arrow-back" size={16} color={colors.primary} />
+          <Text style={styles.backButtonText}>Back</Text>
+        </View>
+      </Pressable>
+
+      <Text style={styles.phoneTitle}>Reset Password</Text>
+      <Text style={styles.phoneSubtitle}>
+        Enter your email address and we'll send you a link to reset your password.
+      </Text>
+
+      <View style={styles.emailInputContainer}>
+        <View style={styles.inputWrapper}>
+          <Ionicons name="mail-outline" size={16} color={colors.textMuted} style={styles.inputIcon} />
+          <TextInput
+            style={styles.emailInput}
+            placeholder="Email address"
+            placeholderTextColor={colors.textMuted}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={forgotPasswordEmail}
+            onChangeText={setForgotPasswordEmail}
+            autoFocus
+          />
+        </View>
+      </View>
+
+      <Pressable
+        style={[
+          styles.submitButton, 
+          !forgotPasswordEmail.trim() && styles.submitButtonDisabled
+        ]}
+        onPress={async () => {
+          if (!forgotPasswordEmail.trim()) return;
+          
+          setIsLoading(true);
+          try {
+            const result = await sendPasswordResetEmail(forgotPasswordEmail);
+            setIsLoading(false);
+            
+            if (result.success) {
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setAuthStep('forgot-password-confirmation');
+            } else {
+              Alert.alert('Error', result.error || 'Failed to send reset email. Please try again.');
+            }
+          } catch (error: any) {
+            setIsLoading(false);
+            Alert.alert('Error', 'Failed to send reset email. Please try again.');
+          }
+        }}
+        disabled={!forgotPasswordEmail.trim() || isLoading}
+      >
+        {isLoading ? (
+          <ActivityIndicator color={colors.textInverse} />
+        ) : (
+          <Text style={styles.submitButtonText}>Send Reset Link</Text>
+        )}
+      </Pressable>
+    </View>
+  );
+
+  // Render forgot password confirmation step
+  const renderForgotPasswordConfirmation = () => (
+    <View style={styles.phoneContainer}>
+      <View style={styles.confirmationContainer}>
+        <View style={styles.confirmationIconContainer}>
+          <Ionicons name="mail-outline" size={48} color={colors.primary} />
+        </View>
+        
+        <Text style={styles.phoneTitle}>Check Your Email</Text>
+        <Text style={styles.phoneSubtitle}>
+          We've sent a password reset link to{'\n'}
+          <Text style={styles.emailHighlight}>{forgotPasswordEmail}</Text>
+        </Text>
+        
+        <Text style={styles.confirmationInstructions}>
+          Click the link in the email to reset your password. If you don't see it, check your spam folder.
+        </Text>
+
+        <Pressable
+          style={styles.submitButton}
+          onPress={() => {
+            const emailToPrefill = forgotPasswordEmail;
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+            setAuthStep('email-input');
+            setEmail(emailToPrefill); // Pre-fill email for sign in
+            setForgotPasswordEmail('');
+          }}
+        >
+          <Text style={styles.submitButtonText}>Back to Sign In</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
 
   // Render current step based on authStep
   const renderCurrentStep = () => {
@@ -1061,6 +1205,10 @@ export default function LoginScreen() {
         return renderEmailInput();
       case 'verify-email':
         return renderVerifyEmail();
+      case 'forgot-password':
+        return renderForgotPassword();
+      case 'forgot-password-confirmation':
+        return renderForgotPasswordConfirmation();
       default:
         return renderAuthOptions();
     }
@@ -1094,6 +1242,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     paddingHorizontal: spacing.lg,
     justifyContent: 'center',
+    paddingTop: spacing['2xl'],
+    paddingBottom: spacing.xl,
   },
   loadingContainer: {
     alignItems: 'center',
@@ -1121,53 +1271,59 @@ const styles = StyleSheet.create({
   },
   heroSection: {
     alignItems: 'center',
-    marginBottom: spacing['2xl'],
+    marginBottom: spacing['3xl'],
+    paddingTop: spacing['2xl'],
   },
   logoContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
+    width: 72,
+    height: 72,
+    borderRadius: 18,
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
   },
   logoImage: {
-    width: 56,
-    height: 56,
+    width: 74,
+    height: 74,
   },
   appName: {
-    fontSize: typography.fontSize['2xl'],
-    fontWeight: '800',
+    fontSize: typography.fontSize['3xl'],
+    fontWeight: '700',
     color: colors.textPrimary,
-    letterSpacing: -1,
-    marginBottom: spacing.xs,
+    letterSpacing: -0.5,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+  },
+  appNameAccent: {
+    color: colors.primary,
   },
   tagline: {
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.base,
     color: colors.textSecondary,
     textAlign: 'center',
-    lineHeight: typography.fontSize.sm * 1.5,
+    lineHeight: typography.fontSize.base * 1.4,
+    paddingHorizontal: spacing.lg,
   },
   authButtonsContainer: {
-    gap: spacing.sm,
-    marginBottom: spacing.lg,
+    gap: spacing.md,
+    marginBottom: spacing.xl,
   },
   authButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderSubtle,
     gap: spacing.sm,
   },
   authButtonText: {
     fontSize: typography.fontSize.sm,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.textPrimary,
   },
   dividerContainer: {
@@ -1184,28 +1340,30 @@ const styles = StyleSheet.create({
   dividerText: {
     fontSize: typography.fontSize.xs,
     color: colors.textMuted,
+    fontWeight: '500',
   },
   skipButton: {
     alignItems: 'center',
-    paddingVertical: spacing.sm,
+    paddingVertical: spacing.md,
   },
   skipButtonText: {
     fontSize: typography.fontSize.sm,
-    color: colors.primary,
-    fontWeight: '600',
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
   termsContainer: {
     marginTop: spacing.xl,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
   termsText: {
-    fontSize: 10,
+    fontSize: typography.fontSize.xs,
     color: colors.textMuted,
     textAlign: 'center',
-    lineHeight: 14,
+    lineHeight: typography.fontSize.xs * 1.4,
   },
   termsLink: {
     color: colors.primary,
+    fontWeight: '500',
   },
   
   // Email Input Styles
@@ -1216,10 +1374,10 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: colors.borderSubtle,
     paddingHorizontal: spacing.md,
   },
   inputIcon: {
@@ -1284,7 +1442,7 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingHorizontal: spacing.sm,
     paddingVertical: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.sm,
   },
   requirementText: {
@@ -1313,15 +1471,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   phoneTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: '700',
+    fontSize: typography.fontSize['2xl'],
+    fontWeight: '600',
     color: colors.textPrimary,
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   phoneSubtitle: {
     fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
     marginBottom: spacing.xl,
+    textAlign: 'center',
   },
   phoneInputContainer: {
     flexDirection: 'row',
@@ -1424,7 +1584,7 @@ const styles = StyleSheet.create({
   // Email Verification Styles
   verifyIconContainer: {
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    marginBottom: spacing.xl,
   },
   verifyEmail: {
     fontSize: typography.fontSize.sm,
@@ -1459,6 +1619,43 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
     flex: 1,
+  },
+  
+  // Forgot Password Styles
+  forgotPasswordLink: {
+    alignSelf: 'flex-end',
+    marginBottom: spacing.md,
+    marginTop: spacing.xs,
+  },
+  forgotPasswordLinkText: {
+    fontSize: typography.fontSize.sm,
+    color: colors.primary,
+    fontWeight: '500',
+  },
+  confirmationContainer: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  confirmationIconContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.xl,
+  },
+  confirmationInstructions: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.sm * 1.5,
+    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.md,
+  },
+  emailHighlight: {
+    color: colors.primary,
+    fontWeight: '600',
   },
 });
 

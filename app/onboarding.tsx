@@ -11,6 +11,8 @@ import {
   Platform,
   Alert,
   LayoutAnimation,
+  Linking,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import Animated, {
@@ -32,11 +34,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useAuth } from '@/context/AuthContext';
 import { saveUserProfile, ValidationError } from '@/services/userService';
+import { notificationService } from '@/services/notificationService';
+import { initializeUserStats } from '@/services/statsService';
+import { debug, debugError } from '@/utils/debug';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Onboarding step types
-type OnboardingStep = 'welcome' | 'occupation' | 'level' | 'goals' | 'complete';
+type OnboardingStep = 'welcome' | 'occupation' | 'level' | 'goals' | 'preview' | 'notifications' | 'complete';
 
 // Options data
 const OCCUPATIONS = [
@@ -96,7 +101,7 @@ export default function OnboardingScreen() {
   const [selectedGoals, setSelectedGoals] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  const steps: OnboardingStep[] = ['welcome', 'occupation', 'level', 'goals', 'complete'];
+  const steps: OnboardingStep[] = ['welcome', 'occupation', 'level', 'goals', 'preview', 'notifications', 'complete'];
   const currentStepIndex = steps.indexOf(currentStep);
   const progress = ((currentStepIndex + 1) / steps.length) * 100;
 
@@ -149,12 +154,25 @@ export default function OnboardingScreen() {
           onboardingCompleted: true,
           createdAt: new Date().toISOString(),
         });
+
+        // Initialize user stats
+        try {
+          await initializeUserStats(user.uid);
+          if (__DEV__) {
+            debug('firebase', 'User stats initialized');
+          }
+        } catch (error) {
+          if (__DEV__) {
+            debugError('firebase', 'Failed to initialize user stats:', error);
+          }
+          // Don't block onboarding if stats initialization fails
+        }
       }
       
       // Navigate to home
       router.replace('/home');
     } catch (error) {
-      console.error('Error saving profile:', error);
+      debugError('firebase', 'Error saving profile:', error);
       
       // Show user-friendly error message for validation errors
       if (error instanceof ValidationError) {
@@ -224,6 +242,10 @@ export default function OnboardingScreen() {
         return codingLevel !== '';
       case 'goals':
         return selectedGoals.length > 0;
+      case 'preview':
+        return true;
+      case 'notifications':
+        return true; // Optional step, always can proceed
       default:
         return true;
     }
@@ -240,25 +262,70 @@ export default function OnboardingScreen() {
       exiting={exitingTransition}
       style={styles.stepContainer}
     >
-      <View style={styles.iconContainer}>
-        <Ionicons name="hand-right" size={40} color={colors.primary} />
+      <View style={styles.welcomeContent}>
+        <Text style={styles.welcomeTitle}>
+          Welcome to <Text style={styles.welcomeTitleAccent}>flashbits</Text>
+        </Text>
+        <Text style={styles.welcomeDescription}>
+          Master coding interviews with 2000+ questions.{'\n'}
+          Earn XP, build streaks, and track your progress.
+        </Text>
       </View>
-      
-      <Text style={styles.stepTitle}>Welcome to flashbits!</Text>
-      <Text style={styles.stepSubtitle}>
-        Let's personalize your experience. First, what should we call you?
-      </Text>
 
-      <View style={styles.inputContainer}>
+      <View style={styles.nameInputSection}>
+        <Text style={styles.nameLabel}>What should we call you?</Text>
         <TextInput
           style={styles.textInput}
-          placeholder="Your name"
+          placeholder="Enter your name"
           placeholderTextColor={colors.textMuted}
           value={name}
           onChangeText={setName}
           autoFocus
           autoCapitalize="words"
         />
+      </View>
+
+      <View style={styles.privacySection}>
+        <Text style={styles.privacyText}>
+          By continuing, you agree to our{' '}
+        </Text>
+        <View style={styles.privacyLinksContainer}>
+          <Pressable
+            onPress={async () => {
+              try {
+                const url = 'https://flashbits.co/privacy';
+                const canOpen = await Linking.canOpenURL(url);
+                if (canOpen) {
+                  await Linking.openURL(url);
+                } else {
+                  Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/privacy');
+                }
+              } catch (error) {
+                Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/privacy');
+              }
+            }}
+          >
+            <Text style={styles.privacyLink}>Privacy Policy</Text>
+          </Pressable>
+          <Text style={styles.privacyText}>{' '}and{' '}</Text>
+          <Pressable
+            onPress={async () => {
+              try {
+                const url = 'https://flashbits.co/terms';
+                const canOpen = await Linking.canOpenURL(url);
+                if (canOpen) {
+                  await Linking.openURL(url);
+                } else {
+                  Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/terms');
+                }
+              } catch (error) {
+                Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/terms');
+              }
+            }}
+          >
+            <Text style={styles.privacyLink}>Terms of Service</Text>
+          </Pressable>
+        </View>
       </View>
     </Animated.View>
   );
@@ -412,7 +479,135 @@ export default function OnboardingScreen() {
     </Animated.View>
   );
 
-  // Render Pro Selection Step
+  // Render Preview Step
+  const renderPreview = () => (
+    <Animated.View 
+      entering={enteringTransition}
+      exiting={exitingTransition}
+      style={styles.stepContainer}
+    >
+      <Text style={styles.previewTitle}>Here's what you'll get</Text>
+      <Text style={styles.previewSubtitle}>
+        Everything you need to master coding interviews
+      </Text>
+
+      <View style={styles.mockupContainer}>
+        <Animated.View style={styles.mockupWrapper}>
+          <Image
+            source={require('@/assets/icons/streak-screenshot-portrait.png')}
+            style={styles.mockupImage}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </View>
+
+      <View style={styles.featureList}>
+        <View style={styles.featureItem}>
+          <View style={styles.featureIconContainer}>
+            <Ionicons name="flash" size={16} color={colors.primary} />
+          </View>
+          <Text style={styles.featureText}>Earn XP and unlock ranks</Text>
+        </View>
+
+        <View style={styles.featureItem}>
+          <View style={styles.featureIconContainer}>
+            <Ionicons name="flame" size={16} color="#FF6B00" />
+          </View>
+          <Text style={styles.featureText}>Build streaks for bonus rewards</Text>
+        </View>
+
+        <View style={styles.featureItem}>
+          <View style={styles.featureIconContainer}>
+            <Ionicons name="trophy" size={16} color="#FFD700" />
+          </View>
+          <Text style={styles.featureText}>Track progress across topics</Text>
+        </View>
+
+        <View style={styles.featureItem}>
+          <View style={styles.featureIconContainer}>
+            <Ionicons name="star" size={16} color={colors.secondary} />
+          </View>
+          <Text style={styles.featureText}>2000+ interview questions</Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+
+  // Render Notifications Step
+  const renderNotifications = () => {
+    const handleEnableNotifications = async () => {
+      try {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        const hasPermission = await notificationService.requestPermissions();
+        
+        if (hasPermission) {
+          // Enable notifications with default settings
+          await notificationService.saveSettings({
+            enabled: true,
+            dailyReminder: true,
+            dailyReminderTime: '09:00',
+            practiceStreakReminder: true,
+            motivationalNotifications: true,
+          });
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } else {
+          Alert.alert(
+            'Permission Required',
+            'Please enable notifications in your device settings to receive practice reminders.',
+            [{ text: 'OK' }]
+          );
+        }
+        
+        // Proceed to next step regardless
+        handleNext();
+      } catch (error) {
+        debugError('api', 'Error requesting notifications:', error);
+        // Proceed anyway
+        handleNext();
+      }
+    };
+
+    const handleSkipNotifications = async () => {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      handleNext();
+    };
+
+    return (
+      <Animated.View 
+        entering={enteringTransition}
+        exiting={exitingTransition}
+        style={styles.stepContainer}
+      >
+        <View style={styles.notificationsContent}>
+          <View style={styles.notificationIconContainer}>
+            <Ionicons name="notifications-outline" size={32} color={colors.primary} />
+          </View>
+          <Text style={styles.notificationTitle}>Enable Notifications</Text>
+          <Text style={styles.notificationDescription}>
+            Receive daily practice reminders and stay on track with your learning goals
+          </Text>
+
+          <View style={styles.notificationButtons}>
+            <Pressable
+              style={styles.notificationEnableButton}
+              onPress={handleEnableNotifications}
+            >
+              <Ionicons name="notifications" size={16} color={colors.textInverse} />
+              <Text style={styles.notificationEnableButtonText}>Enable</Text>
+            </Pressable>
+
+            <Pressable
+              style={styles.notificationSkipButton}
+              onPress={handleSkipNotifications}
+            >
+              <Text style={styles.notificationSkipButtonText}>Maybe Later</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Animated.View>
+    );
+  };
+
   // Render Complete Step
   const renderComplete = () => (
     <Animated.View 
@@ -425,8 +620,10 @@ export default function OnboardingScreen() {
       
       <Text style={styles.completeTitle}>You're all set, {name}!</Text>
       <Text style={styles.completeSubtitle}>
-        We've personalized your experience based on your preferences. 
-        Let's start practicing!
+        We've personalized your experience. You'll start with questions matched to your level.
+      </Text>
+      <Text style={styles.completeInstructions}>
+        Swipe right for correct, left for wrong, and up to skip.
       </Text>
 
       <View style={styles.summaryCard}>
@@ -465,6 +662,10 @@ export default function OnboardingScreen() {
         return renderLevel();
       case 'goals':
         return renderGoals();
+      case 'preview':
+        return renderPreview();
+      case 'notifications':
+        return renderNotifications();
       case 'complete':
         return renderComplete();
     }
@@ -597,17 +798,142 @@ const styles = StyleSheet.create({
   iconContainer: {
     marginBottom: spacing.lg,
   },
-  stepTitle: {
+  welcomeContent: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingTop: spacing['2xl'],
+  },
+  welcomeTitle: {
     fontSize: typography.fontSize.xl,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: spacing.sm,
+    textAlign: 'center',
+    letterSpacing: -0.3,
+  },
+  welcomeTitleAccent: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  welcomeDescription: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.sm * 1.5,
+    paddingHorizontal: spacing.xl,
+    fontWeight: '400',
+  },
+  stepTitle: {
+    fontSize: typography.fontSize.lg,
     fontWeight: '700',
     color: colors.textPrimary,
     marginBottom: spacing.xs,
   },
   stepSubtitle: {
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.xs,
     color: colors.textSecondary,
     marginBottom: spacing.xl,
     lineHeight: typography.fontSize.sm * 1.5,
+  },
+  previewTitle: {
+    fontSize: typography.fontSize.base,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+    textAlign: 'center',
+  },
+  previewSubtitle: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.xs * 1.4,
+  },
+  nameInputSection: {
+    paddingBottom: spacing.md,
+    paddingTop: spacing.lg,
+  },
+  nameLabel: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
+    marginBottom: spacing.sm,
+    fontWeight: '500',
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+  },
+  privacySection: {
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xl,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+  },
+  privacyText: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.xs * 1.5,
+  },
+  privacyLinksContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: spacing.xs,
+  },
+  privacyLink: {
+    color: colors.primary,
+    fontWeight: '500',
+    fontSize: typography.fontSize.xs,
+  },
+  mockupContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  mockupWrapper: {
+    transform: [
+      { rotateZ: '-8deg' },
+    ],
+  },
+  mockupImage: {
+    width: SCREEN_WIDTH * 0.5,
+    height: SCREEN_WIDTH * 0.5 * 1.8,
+    maxHeight: 480,
+    borderRadius: borderRadius.lg,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 8,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  featureList: {
+    marginTop: spacing.md,
+    gap: spacing.xs,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: 2,
+  },
+  featureIconContainer: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  featureText: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '400',
+    flex: 1,
+    lineHeight: typography.fontSize.xs * 1.3,
   },
   inputContainer: {
     marginTop: spacing.sm,
@@ -750,8 +1076,77 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: typography.fontSize.sm * 1.5,
+    marginBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+  },
+  completeInstructions: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.xs * 1.4,
+    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.lg,
+  },
+  notificationsContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingTop: spacing.xl,
+    paddingHorizontal: spacing.xl,
+  },
+  notificationIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: colors.primary + '15',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  notificationTitle: {
+    fontSize: typography.fontSize.md,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  notificationDescription: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.xs * 1.5,
     marginBottom: spacing.xl,
     paddingHorizontal: spacing.md,
+  },
+  notificationButtons: {
+    width: '100%',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  notificationEnableButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.md,
+    gap: spacing.xs,
+  },
+  notificationEnableButtonText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: '600',
+    color: colors.textInverse,
+  },
+  notificationSkipButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+  },
+  notificationSkipButtonText: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
+    fontWeight: '400',
   },
   summaryCard: {
     backgroundColor: 'transparent',

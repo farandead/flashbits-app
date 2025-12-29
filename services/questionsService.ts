@@ -17,8 +17,19 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
-import { Question, Topic, Difficulty, QuestionCategory, questions as mockQuestions } from '@/data/questions';
+import { Question, Topic, Difficulty, QuestionCategory } from '@/data/questions';
+import { debug, debugError, debugWarn } from '@/utils/debug';
 import { generateCacheKey, getCachedData, setCachedData, clearCacheByPrefix } from './cacheService';
+import { 
+  loadOfflineQuestions, 
+  filterOfflineQuestions as filterOffline,
+  saveQuestionsForOffline,
+  addQuestionsToOffline,
+  getOfflineQuestionsCount,
+  getOfflineModeEnabled,
+  getOfflineStorageInfo,
+  clearOfflineQuestions,
+} from './offlineStorageService';
 
 const QUESTIONS_COLLECTION = 'questions';
 const DEFAULT_PAGE_SIZE = 50; // Number of questions to fetch per batch
@@ -69,13 +80,14 @@ export const fetchAllQuestions = async (
   pageSize: number = DEFAULT_PAGE_SIZE,
   lastDocument?: QueryDocumentSnapshot<DocumentData>
 ): Promise<PaginatedQuestionsResult> => {
+  // Generate cache key based on pageSize and lastDocument ID
+  const lastDocId = lastDocument?.id || 'first';
+  const cacheKey = generateCacheKey('questions:all', {
+    pageSize,
+    lastDocId,
+  });
+  
   try {
-    // Generate cache key based on pageSize and lastDocument ID
-    const lastDocId = lastDocument?.id || 'first';
-    const cacheKey = generateCacheKey('questions:all', {
-      pageSize,
-      lastDocId,
-    });
     
     // Try to get from cache first (only for first page to avoid pagination complexity)
     if (!lastDocument) {
@@ -139,6 +151,19 @@ export const fetchAllQuestions = async (
     // Check if there are more documents (if we got a full page, there might be more)
     const hasMore = snapshot.docs.length === pageSize;
     
+    // Automatically save questions to offline storage (only for first page to avoid excessive writes)
+    if (!lastDocument && questions.length > 0) {
+      try {
+        // Save to offline storage in background (don't block the response)
+        addQuestionsToOffline(questions).catch((error) => {
+          debugWarn('offline', 'Failed to save questions to offline storage:', error);
+        });
+      } catch (error) {
+        // Silently fail - offline storage is a nice-to-have, not critical
+        debugWarn('offline', 'Error saving questions to offline storage:', error);
+      }
+    }
+    
     const result = {
       questions,
       lastDoc,
@@ -155,8 +180,62 @@ export const fetchAllQuestions = async (
     }
     
     return result;
-  } catch (error) {
-    console.error('Error fetching questions:', error);
+  } catch (error: any) {
+    debugError('questions', 'Error fetching questions:', error);
+    
+    // Check if it's a network/offline error
+    const isNetworkError = 
+      error?.code === 'unavailable' ||
+      error?.code === 'deadline-exceeded' ||
+      error?.code === 'failed-precondition' ||
+      error?.code === 'internal' ||
+      error?.message?.includes('network') ||
+      error?.message?.includes('offline') ||
+      error?.message?.includes('Failed to get document') ||
+      error?.message?.includes('fetch') ||
+      error?.message?.includes('connection') ||
+      error?.message?.includes('timeout');
+    
+    // If offline, try to use offline storage or cache
+    // For pagination, we can still try offline storage but won't have proper pagination
+    if (isNetworkError) {
+      // First try cache (even if expired)
+      const cached = await getCachedData<CacheablePaginatedResult>(cacheKey, Infinity);
+      if (cached && cached.questions.length > 0) {
+        debug('cache', 'Using cached questions due to network error');
+        return {
+          questions: cached.questions,
+          lastDoc: null,
+          hasMore: cached.hasMore,
+        };
+      }
+      
+      // Then try offline storage
+      const offlineQuestions = await loadOfflineQuestions();
+      if (offlineQuestions.length > 0) {
+        // For pagination, if we have a lastDocument, we can't properly paginate offline questions
+        // So we'll return all offline questions if it's the first page, or empty if paginating
+        if (lastDocument) {
+          // Can't paginate offline questions properly, return empty to indicate no more
+          debug('offline', 'Cannot paginate offline questions, returning empty');
+          return {
+            questions: [],
+            lastDoc: null,
+            hasMore: false,
+          };
+        }
+        
+        // Return first page of offline questions
+        const paginatedQuestions = offlineQuestions.slice(0, pageSize);
+        debug('offline', `Using ${paginatedQuestions.length} questions from offline storage (${offlineQuestions.length} total available)`);
+        return {
+          questions: paginatedQuestions,
+          lastDoc: null,
+          hasMore: offlineQuestions.length > pageSize,
+        };
+      }
+    }
+    
     // Return empty result on error - caller should handle fallback
     return {
       questions: [],
@@ -175,9 +254,11 @@ export const fetchAllQuestionsLegacy = async (): Promise<Question[]> => {
     
     if (snapshot.empty) {
       if (__DEV__) {
-        console.log('No questions in Firebase, returning mock data');
+        debug('questions', 'No questions in Firebase');
       }
-      return mockQuestions;
+      // Try offline storage as fallback
+      const offlineQuestions = await loadOfflineQuestions();
+      return offlineQuestions;
     }
     
     // Filter out hidden questions
@@ -185,9 +266,10 @@ export const fetchAllQuestionsLegacy = async (): Promise<Question[]> => {
       .filter(isQuestionVisible)
       .map(convertDocToQuestion);
   } catch (error) {
-    console.error('Error fetching questions:', error);
-    // Fallback to mock data if Firebase fails
-    return mockQuestions;
+    debugError('questions', 'Error fetching questions:', error);
+    // Try offline storage as fallback
+    const offlineQuestions = await loadOfflineQuestions();
+    return offlineQuestions;
   }
 };
 
@@ -199,7 +281,9 @@ export const fetchQuestionsByTopic = async (topic: Topic): Promise<Question[]> =
     const snapshot = await getDocs(q);
     
     if (snapshot.empty) {
-      return mockQuestions.filter(q => q.topic === topic);
+      // Try offline storage as fallback
+      const offlineQuestions = await filterOffline([topic], undefined, undefined);
+      return offlineQuestions;
     }
     
     // Filter out hidden questions
@@ -207,8 +291,10 @@ export const fetchQuestionsByTopic = async (topic: Topic): Promise<Question[]> =
       .filter(isQuestionVisible)
       .map(convertDocToQuestion);
   } catch (error) {
-    console.error('Error fetching questions by topic:', error);
-    return mockQuestions.filter(q => q.topic === topic);
+    debugError('questions', 'Error fetching questions by topic:', error);
+    // Try offline storage as fallback
+    const offlineQuestions = await filterOffline([topic], undefined, undefined);
+    return offlineQuestions;
   }
 };
 
@@ -220,7 +306,9 @@ export const fetchQuestionsByDifficulty = async (difficulty: Difficulty): Promis
     const snapshot = await getDocs(q);
     
     if (snapshot.empty) {
-      return mockQuestions.filter(q => q.difficulty === difficulty);
+      // Try offline storage as fallback
+      const offlineQuestions = await filterOffline(undefined, [difficulty], undefined);
+      return offlineQuestions;
     }
     
     // Filter out hidden questions
@@ -228,8 +316,10 @@ export const fetchQuestionsByDifficulty = async (difficulty: Difficulty): Promis
       .filter(isQuestionVisible)
       .map(convertDocToQuestion);
   } catch (error) {
-    console.error('Error fetching questions by difficulty:', error);
-    return mockQuestions.filter(q => q.difficulty === difficulty);
+    debugError('questions', 'Error fetching questions by difficulty:', error);
+    // Try offline storage as fallback
+    const offlineQuestions = await filterOffline(undefined, [difficulty], undefined);
+    return offlineQuestions;
   }
 };
 
@@ -239,13 +329,14 @@ export const fetchQuestionsWithFilters = async (
   difficulties?: Difficulty[],
   category?: QuestionCategory | 'all'
 ): Promise<Question[]> => {
+  // Generate cache key based on filters
+  const cacheKey = generateCacheKey('questions:filters', {
+    topics: topics?.sort().join(','),
+    difficulties: difficulties?.sort().join(','),
+    category,
+  });
+  
   try {
-    // Generate cache key based on filters
-    const cacheKey = generateCacheKey('questions:filters', {
-      topics: topics?.sort().join(','),
-      difficulties: difficulties?.sort().join(','),
-      category,
-    });
     
     // Try to get from cache first
     const cached = await getCachedData<Question[]>(cacheKey, CACHE_TTL);
@@ -284,19 +375,9 @@ export const fetchQuestionsWithFilters = async (
     const snapshot = await getDocs(q);
     
     if (snapshot.empty) {
-      // Use mock data with filters
-      let filtered = mockQuestions;
-      if (topics && topics.length > 0) {
-        filtered = filtered.filter((q: Question) => topics.includes(q.topic));
-      }
-      if (difficulties && difficulties.length > 0) {
-        filtered = filtered.filter((q: Question) => difficulties.includes(q.difficulty));
-      }
-      // Mock questions don't have category, treat as 'general'
-      if (category && category !== 'all') {
-        filtered = filtered.filter((q: Question) => (q.category || 'general') === category);
-      }
-      return filtered;
+      // Try offline storage as fallback
+      const offlineQuestions = await filterOffline(topics, difficulties, category);
+      return offlineQuestions;
     }
     
     // Filter out hidden questions first
@@ -328,6 +409,19 @@ export const fetchQuestionsWithFilters = async (
       questions = questions.filter(q => difficulties.includes(q.difficulty));
     }
     
+    // Automatically save questions to offline storage
+    if (questions.length > 0) {
+      try {
+        // Save to offline storage in background (don't block the response)
+        addQuestionsToOffline(questions).catch((error) => {
+          debugWarn('offline', 'Failed to save filtered questions to offline storage:', error);
+        });
+      } catch (error) {
+        // Silently fail - offline storage is a nice-to-have, not critical
+        debugWarn('offline', 'Error saving filtered questions to offline storage:', error);
+      }
+    }
+    
     // Cache the result
     await setCachedData<Question[]>(cacheKey, questions, CACHE_TTL);
     
@@ -336,7 +430,7 @@ export const fetchQuestionsWithFilters = async (
     // If index error, fall back to client-side filtering
     if (error?.code === 'failed-precondition' || error?.message?.includes('index')) {
       if (__DEV__) {
-        console.warn('Firestore index required. Falling back to client-side filtering.');
+        debugWarn('questions', 'Firestore index required. Falling back to client-side filtering.');
       }
       
       // Fallback: fetch all and filter client-side
@@ -345,17 +439,9 @@ export const fetchQuestionsWithFilters = async (
         const snapshot = await getDocs(questionsRef);
         
         if (snapshot.empty) {
-          let filtered = mockQuestions;
-          if (topics && topics.length > 0) {
-            filtered = filtered.filter((q: Question) => topics.includes(q.topic));
-          }
-          if (difficulties && difficulties.length > 0) {
-            filtered = filtered.filter((q: Question) => difficulties.includes(q.difficulty));
-          }
-          if (category && category !== 'all') {
-            filtered = filtered.filter((q: Question) => (q.category || 'general') === category);
-          }
-          return filtered;
+          // Try offline storage as fallback
+          const offlineQuestions = await filterOffline(topics, difficulties, category);
+          return offlineQuestions;
         }
         
         let visibleDocs = snapshot.docs.filter(isQuestionVisible);
@@ -374,23 +460,43 @@ export const fetchQuestionsWithFilters = async (
         
         return questions;
       } catch (fallbackError) {
-        console.error('Error in fallback query:', fallbackError);
+        debugError('questions', 'Error in fallback query:', fallbackError);
       }
     }
     
-    console.error('Error fetching filtered questions:', error);
-    // Fallback with filters
-    let filtered = mockQuestions;
-    if (topics && topics.length > 0) {
-      filtered = filtered.filter(q => topics.includes(q.topic));
+    debugError('questions', 'Error fetching filtered questions:', error);
+    
+    // Check if it's a network/offline error
+    const isNetworkError = 
+      error?.code === 'unavailable' ||
+      error?.code === 'deadline-exceeded' ||
+      error?.message?.includes('network') ||
+      error?.message?.includes('offline') ||
+      error?.message?.includes('Failed to get document');
+    
+    // If offline, try to use offline storage or cache
+    if (isNetworkError) {
+      // First try cache
+      const cached = await getCachedData<Question[]>(cacheKey, Infinity);
+      if (cached && cached.length > 0) {
+        debug('cache', 'Using cached filtered questions due to network error');
+        return cached;
+      }
+      
+      // Then try offline storage with filters
+      const offlineQuestions = await filterOffline(
+        topics,
+        difficulties,
+        category
+      );
+      if (offlineQuestions.length > 0) {
+        debug('offline', `Using ${offlineQuestions.length} filtered questions from offline storage`);
+        return offlineQuestions;
+      }
     }
-    if (difficulties && difficulties.length > 0) {
-      filtered = filtered.filter(q => difficulties.includes(q.difficulty));
-    }
-    if (category && category !== 'all') {
-      filtered = filtered.filter(q => (q.category || 'general') === category);
-    }
-    return filtered;
+    
+    // No fallback - return empty array
+    return [];
   }
 };
 
@@ -403,16 +509,17 @@ export const fetchQuestionsWithFiltersPaginated = async (
   pageSize: number = DEFAULT_PAGE_SIZE,
   lastDocument?: QueryDocumentSnapshot<DocumentData>
 ): Promise<PaginatedQuestionsResult> => {
+  // Generate cache key based on filters, pageSize, and lastDocument ID
+  const lastDocId = lastDocument?.id || 'first';
+  const cacheKey = generateCacheKey('questions:filters:paginated', {
+    topics: topics?.sort().join(','),
+    difficulties: difficulties?.sort().join(','),
+    category,
+    pageSize,
+    lastDocId,
+  });
+  
   try {
-    // Generate cache key based on filters, pageSize, and lastDocument ID
-    const lastDocId = lastDocument?.id || 'first';
-    const cacheKey = generateCacheKey('questions:filters:paginated', {
-      topics: topics?.sort().join(','),
-      difficulties: difficulties?.sort().join(','),
-      category,
-      pageSize,
-      lastDocId,
-    });
     
     // Try to get from cache first (only for first page)
     if (!lastDocument) {
@@ -510,6 +617,19 @@ export const fetchQuestionsWithFiltersPaginated = async (
     // If we got a full batch and have questions, there might be more
     const hasMore = snapshot.docs.length === fetchLimit && questions.length > 0;
     
+    // Automatically save questions to offline storage (only for first page to avoid excessive writes)
+    if (!lastDocument && questions.length > 0) {
+      try {
+        // Save to offline storage in background (don't block the response)
+        addQuestionsToOffline(questions).catch((error) => {
+          debugWarn('offline', 'Failed to save filtered questions to offline storage:', error);
+        });
+      } catch (error) {
+        // Silently fail - offline storage is a nice-to-have, not critical
+        debugWarn('offline', 'Error saving filtered questions to offline storage:', error);
+      }
+    }
+    
     const result = {
       questions,
       lastDoc,
@@ -530,7 +650,7 @@ export const fetchQuestionsWithFiltersPaginated = async (
     // If index error, fall back to fetching all and filtering client-side
     if (error?.code === 'failed-precondition' || error?.message?.includes('index')) {
       if (__DEV__) {
-        console.warn('Firestore index required. Falling back to client-side filtering.');
+        debugWarn('questions', 'Firestore index required. Falling back to client-side filtering.');
       }
       
       // Fallback: fetch without filters, filter client-side
@@ -579,11 +699,104 @@ export const fetchQuestionsWithFiltersPaginated = async (
           hasMore,
         };
       } catch (fallbackError) {
-        console.error('Error in fallback query:', fallbackError);
+        debugError('questions', 'Error in fallback query:', fallbackError);
       }
     }
     
-    console.error('Error fetching filtered questions:', error);
+    debugError('questions', 'Error fetching filtered questions:', error);
+    
+    // Check if it's a network/offline error
+    const isNetworkError = 
+      error?.code === 'unavailable' ||
+      error?.code === 'deadline-exceeded' ||
+      error?.code === 'failed-precondition' ||
+      error?.code === 'internal' ||
+      error?.message?.includes('network') ||
+      error?.message?.includes('offline') ||
+      error?.message?.includes('Failed to get document') ||
+      error?.message?.includes('fetch') ||
+      error?.message?.includes('connection') ||
+      error?.message?.includes('timeout');
+    
+    // If offline, try to use cached data (only for first page)
+    if (isNetworkError) {
+      // First try cache
+      const cached = await getCachedData<CacheablePaginatedResult>(cacheKey, Infinity);
+      if (cached && cached.questions.length > 0) {
+        debug('cache', 'Using cached paginated questions due to network error');
+        return {
+          questions: cached.questions,
+          lastDoc: null,
+          hasMore: cached.hasMore,
+        };
+      }
+      
+      // Check offline storage info first to see if expired
+      const offlineInfo = await getOfflineStorageInfo();
+      const offlineModeEnabled = await getOfflineModeEnabled();
+      
+      // If offline mode is enabled but questions are expired, auto-redownload
+      if (offlineModeEnabled && (offlineInfo.isExpired || offlineInfo.questionCount === 0) && !lastDocument) {
+        debug('offline', 'Offline mode enabled but questions expired - auto-redownloading...');
+        try {
+          // Clear expired questions if any
+          if (offlineInfo.isExpired && offlineInfo.questionCount > 0) {
+            await clearOfflineQuestions();
+          }
+          
+          // Download fresh questions
+          const result = await prefetchQuestionsForOffline(2000, true);
+          if (result.success) {
+            debug('offline', 'Auto-redownloaded expired questions successfully');
+            // Reload offline questions after download and filter them
+            const freshOfflineQuestions = await filterOffline(
+              topics,
+              difficulties,
+              category
+            );
+            if (freshOfflineQuestions.length > 0) {
+              const paginatedQuestions = freshOfflineQuestions.slice(0, pageSize);
+              return {
+                questions: paginatedQuestions,
+                lastDoc: null,
+                hasMore: freshOfflineQuestions.length > pageSize,
+              };
+            }
+          }
+        } catch (error) {
+          debugError('offline', 'Error auto-redownloading expired questions:', error);
+        }
+      }
+      
+      // Then try offline storage with filters
+      // For pagination, we can't properly paginate filtered offline questions
+      if (lastDocument) {
+        // Can't paginate offline questions properly, return empty to indicate no more
+        debug('offline', 'Cannot paginate filtered offline questions, returning empty');
+        return {
+          questions: [],
+          lastDoc: null,
+          hasMore: false,
+        };
+      }
+      
+      const offlineQuestions = await filterOffline(
+        topics,
+        difficulties,
+        category
+      );
+      if (offlineQuestions.length > 0) {
+        // Return first page of offline questions
+        const paginatedQuestions = offlineQuestions.slice(0, pageSize);
+        debug('offline', `Using ${paginatedQuestions.length} filtered questions from offline storage (${offlineQuestions.length} total available)`);
+        return {
+          questions: paginatedQuestions,
+          lastDoc: null,
+          hasMore: offlineQuestions.length > pageSize,
+        };
+      }
+    }
+    
     return {
       questions: [],
       lastDoc: null,
@@ -616,17 +829,21 @@ export const fetchQuestionById = async (questionId: string): Promise<Question | 
       return question;
     }
     
-    // Fallback to mock data
-    const mockQuestion = mockQuestions.find(q => q.id === questionId) || null;
-    if (mockQuestion) {
-      // Cache mock question too
-      await setCachedData<Question>(cacheKey, mockQuestion, CACHE_TTL);
+    // Try offline storage as fallback
+    const offlineQuestions = await loadOfflineQuestions();
+    const offlineQuestion = offlineQuestions.find(q => q.id === questionId) || null;
+    if (offlineQuestion) {
+      // Cache offline question too
+      await setCachedData<Question>(cacheKey, offlineQuestion, CACHE_TTL);
     }
     
-    return mockQuestion;
+    return offlineQuestion;
   } catch (error) {
-    console.error('Error fetching question:', error);
-    return mockQuestions.find(q => q.id === questionId) || null;
+    debugError('questions', 'Error fetching question:', error);
+    // Try offline storage as fallback
+    const offlineQuestions = await loadOfflineQuestions();
+    const offlineQuestion = offlineQuestions.find(q => q.id === questionId) || null;
+    return offlineQuestion;
   }
 };
 
@@ -644,7 +861,7 @@ export const addQuestion = async (question: Omit<Question, 'id'>): Promise<strin
     
     return docRef.id;
   } catch (error) {
-    console.error('Error adding question:', error);
+    debugError('questions', 'Error adding question:', error);
     throw error;
   }
 };
@@ -664,7 +881,7 @@ export const updateQuestion = async (
     // Invalidate cache when a question is updated
     await clearCacheByPrefix('questions');
   } catch (error) {
-    console.error('Error updating question:', error);
+    debugError('questions', 'Error updating question:', error);
     throw error;
   }
 };
@@ -678,13 +895,16 @@ export const deleteQuestion = async (questionId: string): Promise<void> => {
     // Invalidate cache when a question is deleted
     await clearCacheByPrefix('questions');
   } catch (error) {
-    console.error('Error deleting question:', error);
+    debugError('questions', 'Error deleting question:', error);
     throw error;
   }
 };
 
 // Seed Firebase with mock questions (useful for initial setup)
 export const seedQuestionsToFirebase = async (): Promise<void> => {
+  // Import mock questions only for seeding
+  const { questions: mockQuestions } = await import('@/data/questions');
+  
   try {
     const batch = writeBatch(db);
     const questionsRef = collection(db, QUESTIONS_COLLECTION);
@@ -692,7 +912,7 @@ export const seedQuestionsToFirebase = async (): Promise<void> => {
     // Check if questions already exist
     const existingDocs = await getDocs(questionsRef);
     if (!existingDocs.empty) {
-      console.log('Questions already exist in Firebase, skipping seed');
+      debug('questions', 'Questions already exist in Firebase, skipping seed');
       return;
     }
     
@@ -707,10 +927,76 @@ export const seedQuestionsToFirebase = async (): Promise<void> => {
     }
     
     await batch.commit();
-    console.log('Successfully seeded questions to Firebase');
+    debug('questions', 'Successfully seeded questions to Firebase');
   } catch (error) {
-    console.error('Error seeding questions:', error);
+    debugError('questions', 'Error seeding questions:', error);
     throw error;
+  }
+};
+
+/**
+ * Pre-fetch and save questions for offline use
+ * Fetches questions from Firebase and stores them locally for offline access
+ * @param maxQuestions Maximum number of questions to fetch (default: 200)
+ * @param replaceExisting If true, replaces existing offline questions. If false, merges with existing.
+ */
+export const prefetchQuestionsForOffline = async (
+  maxQuestions: number = 200,
+  replaceExisting: boolean = false
+): Promise<{ success: boolean; count: number; error?: string }> => {
+  try {
+    debug('offline', `Pre-fetching up to ${maxQuestions} questions for offline use...`);
+    
+    // Fetch questions from Firebase
+    const questionsRef = collection(db, QUESTIONS_COLLECTION);
+    const q = query(
+      questionsRef,
+      orderBy('createdAt', 'desc'),
+      limit(maxQuestions)
+    );
+    
+    const snapshot = await getDocs(q);
+    
+    if (snapshot.empty) {
+      debug('questions', 'No questions found in Firebase');
+      return { success: false, count: 0, error: 'No questions found' };
+    }
+    
+    // Filter out hidden questions and convert to Question type
+    const visibleDocs = snapshot.docs.filter(isQuestionVisible);
+    const questions = visibleDocs.map(convertDocToQuestion);
+    
+    if (questions.length === 0) {
+      debug('questions', 'No visible questions found');
+      return { success: false, count: 0, error: 'No visible questions found' };
+    }
+    
+    // Save to offline storage
+    if (replaceExisting) {
+      await saveQuestionsForOffline(questions);
+    } else {
+      await addQuestionsToOffline(questions);
+    }
+    
+    const finalCount = await getOfflineQuestionsCount();
+    debug('offline', `Successfully saved ${questions.length} questions for offline use (${finalCount} total offline)`);
+    
+    return { success: true, count: finalCount };
+  } catch (error: any) {
+    debugError('offline', 'Error pre-fetching questions for offline:', error);
+    
+    // Check if it's a network error
+    const isNetworkError = 
+      error?.code === 'unavailable' ||
+      error?.code === 'deadline-exceeded' ||
+      error?.message?.includes('network') ||
+      error?.message?.includes('offline');
+    
+    if (isNetworkError) {
+      return { success: false, count: 0, error: 'Network error. Please check your connection.' };
+    }
+    
+    return { success: false, count: 0, error: error?.message || 'Failed to pre-fetch questions' };
   }
 };
 

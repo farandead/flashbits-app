@@ -4,10 +4,11 @@
   },
   "build": {
     "development": {
+      "node": "22.13.1",
       "developmentClient": true,
       "distribution": "internal",
       "ios": {
-        "simulator": true
+        "simulator": false
       },
       "android": {
         "buildType": "apk"
@@ -23,10 +24,12 @@
         "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23lilGvTP0FLJSbpkD",
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
-        "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode"
+        "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode",
+        "EXPO_PUBLIC_REVENUECAT_API_KEY": "appl_hMEAXDEWgsafXafxJrgvrZLFrnE"
       }
     },
     "preview": {
+      "node": "22.13.1",
       "distribution": "internal",
       "ios": {
         "simulator": false,
@@ -46,10 +49,36 @@
         "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23lilGvTP0FLJSbpkD",
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
-        "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode"
+        "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode",
+        "EXPO_PUBLIC_REVENUECAT_API_KEY": "appl_hMEAXDEWgsafXafxJrgvrZLFrnE"
+      }
+    },
+    "ad-hoc": {
+      "node": "22.13.1",
+      "distribution": "internal",
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release",
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "EXPO_PUBLIC_FIREBASE_API_KEY": "AIzaSyCC8QQdswUwhn9Cc_9AZjTOI-rYisjYL3M",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN": "flashprep-11c85.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID": "flashprep-11c85",
+        "EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET": "flashprep-11c85.firebasestorage.app",
+        "EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID": "258968844420",
+        "EXPO_PUBLIC_FIREBASE_APP_ID": "1:258968844420:web:3ce107a1de69ffa8d5aad1",
+        "EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID": "G-Q1XG9SFFTB",
+        "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23lilGvTP0FLJSbpkD",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
+        "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode",
+        "EXPO_PUBLIC_REVENUECAT_API_KEY": "appl_hMEAXDEWgsafXafxJrgvrZLFrnE"
       }
     },
     "production": {
+      "node": "22.13.1",
+      "distribution": "store",
       "ios": {
         "simulator": false,
         "buildConfiguration": "Release"
@@ -68,16 +97,17 @@
         "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23lilGvTP0FLJSbpkD",
         "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
         "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID": "258968844420-4n2s0fqg8a0dpmdn13cfq9vpq6f1p1c5.apps.googleusercontent.com",
-        "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode"
+        "EXPO_PUBLIC_CLOUD_FUNCTION_URL": "https://us-central1-flashprep-11c85.cloudfunctions.net/exchangeGitHubCode",
+        "EXPO_PUBLIC_REVENUECAT_API_KEY": "appl_hMEAXDEWgsafXafxJrgvrZLFrnE"
       }
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "appleId": "your-apple-id@example.com",
-        "ascAppId": "your-app-store-connect-app-id",
-        "appleTeamId": "your-apple-team-id"
+        "appleId": "faranzafarcs@gmail.com",
+        "ascAppId": "6756982859",
+        "appleTeamId": "8D4VX8MVPN"
       },
       "android": {
         "serviceAccountKeyPath": "./path/to/api-key.json",

@@ -19,6 +19,7 @@ import { getUserProfile, UserProfile, updateUserProfile, ValidationError } from 
 import { getUserStats, UserStats, getFormattedTopicProgress } from '@/services/statsService';
 import { topicColors } from '@/data/questions';
 import SignInRequired from '@/components/SignInRequired';
+import { debugError } from '@/utils/debug';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -43,14 +44,17 @@ const GOALS: { id: string; label: string; icon: IoniconsName }[] = [
 ];
 
 // Hacker Ranks
+// Adjusted for new XP system with progressive streak multipliers and ~2K questions
 const HACKER_RANKS: { name: string; minXP: number; icon: IoniconsName; color: string; description: string }[] = [
   { name: 'n00b', minXP: 0, icon: 'person-outline', color: '#6B7280', description: 'Just getting started' },
-  { name: 'Script Kiddie', minXP: 5, icon: 'code-slash', color: '#10B981', description: 'Learning the basics' },
-  { name: 'Code Monkey', minXP: 15, icon: 'terminal', color: '#3B82F6', description: 'Writing code daily' },
-  { name: 'Hacktivist', minXP: 30, icon: 'laptop-outline', color: '#8B5CF6', description: 'Fighting with code' },
-  { name: 'White Hat', minXP: 50, icon: 'shield-checkmark', color: '#F59E0B', description: 'Ethical hacker' },
-  { name: 'Black Hat', minXP: 100, icon: 'skull', color: '#EF4444', description: 'Elite programmer' },
-  { name: 'Ghost', minXP: 200, icon: 'eye-off', color: '#00FF94', description: 'Legendary status' },
+  { name: 'Script Kiddie', minXP: 50, icon: 'code-slash', color: '#10B981', description: 'Learning the basics' },
+  { name: 'Code Monkey', minXP: 150, icon: 'terminal', color: '#3B82F6', description: 'Writing code daily' },
+  { name: 'Hacktivist', minXP: 350, icon: 'laptop-outline', color: '#8B5CF6', description: 'Fighting with code' },
+  { name: 'White Hat', minXP: 700, icon: 'shield-checkmark', color: '#F59E0B', description: 'Ethical hacker' },
+  { name: 'Black Hat', minXP: 1500, icon: 'skull', color: '#EF4444', description: 'Elite programmer' },
+  { name: 'Ghost', minXP: 3000, icon: 'eye-off', color: '#00FF94', description: 'Legendary status' },
+  { name: 'Phantom', minXP: 6000, icon: 'sparkles', color: '#A855F7', description: 'Mythical coder' },
+  { name: 'Legend', minXP: 12000, icon: 'diamond', color: '#FFD700', description: 'Ultimate mastery' },
 ];
 
 // Mock data for progress
@@ -141,7 +145,7 @@ export default function ProgressScreen() {
           setUserProfile(profile);
           setUserStats(stats);
         } catch (error) {
-          console.error('Error fetching data:', error);
+          debugError('firebase', 'Error fetching data:', error);
         } finally {
           setIsLoadingStats(false);
         }
@@ -186,7 +190,7 @@ export default function ProgressScreen() {
       
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
-      console.error('Error saving level:', error);
+      debugError('firebase', 'Error saving level:', error);
       Alert.alert('Error', 'Failed to save changes. Please try again.');
     } finally {
       setIsSaving(false);
@@ -208,7 +212,7 @@ export default function ProgressScreen() {
       
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error) {
-      console.error('Error saving goals:', error);
+      debugError('firebase', 'Error saving goals:', error);
       
       // Show user-friendly error message for validation errors
       if (error instanceof ValidationError) {
@@ -242,6 +246,7 @@ export default function ProgressScreen() {
     wrongAnswers: 0,
     skippedQuestions: 0,
     xp: 0,
+    maxStreak: 0,
     topicsProgress: {},
     difficultyProgress: {},
     answeredQuestionIds: [],
@@ -501,6 +506,25 @@ export default function ProgressScreen() {
               <Text style={styles.additionalStatLabel}>Total XP</Text>
             </View>
           </View>
+
+          {/* Max Streak Card - Highlighted */}
+          {stats.maxStreak > 0 && (
+            <Animated.View
+              entering={FadeInUp.duration(600).delay(500)}
+              style={styles.maxStreakCard}
+            >
+              <View style={styles.maxStreakContent}>
+                <View style={styles.maxStreakIconContainer}>
+                  <Ionicons name="flame" size={32} color="#FF6B00" />
+                </View>
+                <View style={styles.maxStreakTextContainer}>
+                  <Text style={styles.maxStreakLabel}>Best Streak</Text>
+                  <Text style={styles.maxStreakValue}>{stats.maxStreak}</Text>
+                  <Text style={styles.maxStreakSubtext}>consecutive correct answers</Text>
+                </View>
+              </View>
+            </Animated.View>
+          )}
         </Animated.View>
 
         {/* Topics Progress */}
@@ -566,9 +590,8 @@ export default function ProgressScreen() {
           entering={FadeInUp.duration(600).delay(700)}
           style={styles.footer}
         >
-          <Text style={styles.footerEmoji}>🚀</Text>
           <Text style={styles.footerText}>
-            Keep hacking! Every correct answer = 1 XP
+            Keep practicing! Every correct answer earns XP
           </Text>
         </Animated.View>
       </ScrollView>
@@ -695,11 +718,16 @@ export default function ProgressScreen() {
                       toggleGoal(goal.id);
                     }}
                   >
-                    <Ionicons 
-                      name={goal.icon} 
-                      size={22} 
-                      color={isSelected ? colors.primary : colors.textSecondary} 
-                    />
+                    <View style={[
+                      styles.goalIconContainer,
+                      isSelected && styles.goalIconContainerSelected,
+                    ]}>
+                      <Ionicons 
+                        name={goal.icon} 
+                        size={18} 
+                        color={isSelected ? colors.primary : colors.textSecondary} 
+                      />
+                    </View>
                     <Text style={[
                       styles.goalOptionLabel,
                       isSelected && styles.goalOptionLabelSelected,
@@ -758,23 +786,24 @@ const styles = StyleSheet.create({
   },
   headerLeft: {},
   headerTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     color: colors.textPrimary,
-    letterSpacing: -0.3,
   },
   headerSubtitle: {
     fontSize: typography.fontSize.xs,
     color: colors.textMuted,
-    marginTop: 2,
+    marginTop: 4,
   },
   closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'transparent',
+    width: 40,
+    height: 40,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   scrollView: {
     flex: 1,
@@ -786,10 +815,12 @@ const styles = StyleSheet.create({
   
   // User Info Card
   userInfoCard: {
-    backgroundColor: 'transparent',
-    borderRadius: borderRadius.lg,
+    backgroundColor: colors.cardSubtle,
+    borderRadius: borderRadius.md,
     padding: spacing.md,
     marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   userInfoHeader: {
     flexDirection: 'row',
@@ -835,11 +866,13 @@ const styles = StyleSheet.create({
   userStatItemTappable: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.primaryGlow,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
     gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   userStatTextTappable: {
     fontSize: typography.fontSize.sm,
@@ -850,15 +883,17 @@ const styles = StyleSheet.create({
   // Modal Styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: colors.background,
-    borderTopLeftRadius: borderRadius['2xl'],
-    borderTopRightRadius: borderRadius['2xl'],
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
     maxHeight: SCREEN_HEIGHT * 0.85,
     paddingBottom: spacing['3xl'],
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSubtle,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -869,18 +904,26 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.md,
   },
   modalTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     color: colors.textPrimary,
   },
   modalCloseButton: {
-    padding: spacing.xs,
+    width: 40,
+    height: 40,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   modalSubtitle: {
-    fontSize: typography.fontSize.md,
+    fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
     paddingHorizontal: spacing.xl,
     marginBottom: spacing.lg,
+    lineHeight: typography.fontSize.sm * 1.4,
   },
   modalScroll: {
     paddingHorizontal: spacing.xl,
@@ -889,27 +932,28 @@ const styles = StyleSheet.create({
   modalFooter: {
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSubtle,
   },
   selectedCount: {
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.xs,
     color: colors.textMuted,
     textAlign: 'center',
     marginBottom: spacing.md,
   },
   modalSaveButton: {
     backgroundColor: colors.primary,
-    paddingVertical: spacing.base,
-    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
     alignItems: 'center',
     marginHorizontal: spacing.xl,
-    marginTop: spacing.lg,
   },
   modalSaveButtonDisabled: {
     opacity: 0.5,
   },
   modalSaveButtonText: {
-    fontSize: typography.fontSize.md,
-    fontWeight: '700',
+    fontSize: typography.fontSize.sm,
+    fontWeight: '600',
     color: colors.textInverse,
   },
   
@@ -917,28 +961,28 @@ const styles = StyleSheet.create({
   levelOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
     padding: spacing.md,
     marginBottom: spacing.sm,
     gap: spacing.md,
   },
   levelOptionSelected: {
-    borderColor: colors.primary + '40',
-    backgroundColor: colors.primary + '08',
+    borderColor: 'rgba(0, 255, 148, 0.4)',
+    backgroundColor: 'rgba(0, 255, 148, 0.08)',
   },
   levelOptionIcon: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   levelOptionIconSelected: {
-    backgroundColor: colors.primary + '15',
+    backgroundColor: 'rgba(0, 255, 148, 0.15)',
   },
   levelOptionInfo: {
     flex: 1,
@@ -947,60 +991,77 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.sm,
     fontWeight: '500',
     color: colors.textSecondary,
+    marginBottom: 2,
   },
   levelOptionLabelSelected: {
     color: colors.textPrimary,
+    fontWeight: '600',
   },
   levelOptionDescription: {
     fontSize: typography.fontSize.xs,
     color: colors.textMuted,
-    marginTop: 2,
+    lineHeight: typography.fontSize.xs * 1.3,
   },
   
   // Goal Option Styles
   goalOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
     padding: spacing.md,
     marginBottom: spacing.sm,
     gap: spacing.md,
   },
   goalOptionSelected: {
-    borderColor: colors.primary + '40',
-    backgroundColor: colors.primary + '08',
+    borderColor: 'rgba(0, 255, 148, 0.4)',
+    backgroundColor: 'rgba(0, 255, 148, 0.08)',
   },
   goalOptionLabel: {
     flex: 1,
     fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
+    fontWeight: '500',
   },
   goalOptionLabelSelected: {
     color: colors.textPrimary,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   goalCheckbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: colors.border,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   goalCheckboxSelected: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
   },
+  goalIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  goalIconContainerSelected: {
+    backgroundColor: 'rgba(0, 255, 148, 0.15)',
+  },
   
   rankSection: {
-    backgroundColor: 'transparent',
-    borderRadius: borderRadius.lg,
+    backgroundColor: colors.cardSubtle,
+    borderRadius: borderRadius.md,
     padding: spacing.md,
     marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   rankDisplay: {
     flexDirection: 'row',
@@ -1068,9 +1129,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   progressBar: {
-    height: 8,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 4,
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 3,
     overflow: 'hidden',
   },
   progressFill: {
@@ -1085,8 +1146,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textSecondary,
     textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: spacing.sm,
+    letterSpacing: 0.5,
+    marginBottom: spacing.md,
   },
   ranksGrid: {
     flexDirection: 'row',
@@ -1095,12 +1156,12 @@ const styles = StyleSheet.create({
   },
   rankCard: {
     width: (SCREEN_WIDTH - spacing.lg * 2 - spacing.xs * 2) / 3,
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.sm,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
   },
   rankCardLocked: {
     opacity: 0.35,
@@ -1158,12 +1219,12 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     minWidth: (SCREEN_WIDTH - spacing.lg * 2 - spacing.sm) / 2 - spacing.sm,
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
   },
   statIconContainer: {
     marginBottom: spacing.xs,
@@ -1187,12 +1248,12 @@ const styles = StyleSheet.create({
   },
   additionalStatCard: {
     flex: 1,
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.sm,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
   },
   additionalStatIconContainer: {
     marginBottom: spacing.xs,
@@ -1207,6 +1268,53 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
     textAlign: 'center',
+  },
+  
+  // Max Streak Card
+  maxStreakCard: {
+    marginTop: spacing.md,
+    backgroundColor: 'rgba(255, 107, 0, 0.08)',
+    borderRadius: borderRadius.md,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 0, 0.2)',
+  },
+  maxStreakContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  maxStreakIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255, 107, 0, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 107, 0, 0.3)',
+  },
+  maxStreakTextContainer: {
+    flex: 1,
+  },
+  maxStreakLabel: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '600',
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  maxStreakValue: {
+    fontSize: typography.fontSize['3xl'],
+    fontWeight: '900',
+    color: '#FF6B00',
+    lineHeight: typography.fontSize['3xl'] * 1.1,
+  },
+  maxStreakSubtext: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textMuted,
+    marginTop: 2,
   },
   
   topicsSection: {
@@ -1244,9 +1352,9 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
   },
   topicBar: {
-    height: 6,
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: 3,
+    height: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 2,
     overflow: 'hidden',
   },
   topicBarFill: {
@@ -1273,14 +1381,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.xl,
   },
-  footerEmoji: {
-    fontSize: 32,
-    marginBottom: spacing.sm,
-  },
   footerText: {
     fontSize: typography.fontSize.sm,
     color: colors.textMuted,
-    fontStyle: 'italic',
     textAlign: 'center',
   },
 });

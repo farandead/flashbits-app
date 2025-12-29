@@ -16,6 +16,7 @@ import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useRevenueCat } from '@/context/RevenueCatContext';
+import { debugError } from '@/utils/debug';
 
 interface SubscriptionManagerProps {
   visible: boolean;
@@ -95,7 +96,7 @@ const SubscriptionManager: React.FC<SubscriptionManagerProps> = ({ visible, onCl
         );
       }
     } catch (error: any) {
-      console.error('Restore error:', error);
+      debugError('revenueCat', 'Restore error:', error);
       Alert.alert('Error', error.message || 'Failed to restore purchases');
     } finally {
       setIsRestoring(false);
@@ -110,7 +111,7 @@ const SubscriptionManager: React.FC<SubscriptionManagerProps> = ({ visible, onCl
       await refreshCustomerInfo();
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (error: any) {
-      console.error('Refresh error:', error);
+      debugError('revenueCat', 'Refresh error:', error);
     } finally {
       setIsRefreshing(false);
     }
@@ -141,7 +142,7 @@ const SubscriptionManager: React.FC<SubscriptionManagerProps> = ({ visible, onCl
         }
       }
     } catch (error: any) {
-      console.error('Error opening subscription management:', error);
+      debugError('revenueCat', 'Error opening subscription management:', error);
       showManualInstructions();
     }
   };
@@ -375,11 +376,11 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   statusCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.lg,
     padding: spacing.lg,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: colors.borderSubtle,
     marginBottom: spacing.xl,
   },
   statusHeader: {
@@ -421,7 +422,7 @@ const styles = StyleSheet.create({
   },
   subscriptionDetails: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+    borderTopColor: colors.borderSubtle,
     paddingTop: spacing.md,
     gap: spacing.sm,
   },
@@ -463,7 +464,7 @@ const styles = StyleSheet.create({
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     marginBottom: spacing.sm,

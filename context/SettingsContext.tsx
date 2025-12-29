@@ -2,8 +2,9 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Topic, Difficulty, Company, QuestionCategory } from '@/data/questions';
 import { debug, debugSuccess, debugError } from '@/utils/debug';
+import { useAuth } from './AuthContext';
 
-const SETTINGS_STORAGE_KEY = '@flashbits_settings';
+const SETTINGS_STORAGE_KEY_PREFIX = '@flashbits_settings_';
 
 // All available topics
 const ALL_TOPICS: Topic[] = [
@@ -107,6 +108,8 @@ interface StoredSettings {
 }
 
 export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  
   // State
   const [selectedTopics, setSelectedTopics] = useState<Set<Topic>>(
     new Set(ALL_TOPICS)
@@ -125,12 +128,43 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [isLoaded, setIsLoaded] = useState(false);
 
-  // Load settings from AsyncStorage on mount
+  // Get user-specific storage key
+  const getSettingsKey = (): string => {
+    if (user?.uid) {
+      return `${SETTINGS_STORAGE_KEY_PREFIX}${user.uid}`;
+    }
+    return `${SETTINGS_STORAGE_KEY_PREFIX}guest`;
+  };
+
+  // Reset to defaults
+  const resetToDefaults = () => {
+    setSelectedTopics(new Set(ALL_TOPICS));
+    setSelectedDifficulties(new Set(ALL_DIFFICULTIES));
+    setSelectedCompanies(new Set(ALL_COMPANIES));
+    setSelectedCategory('all');
+    setQuestionStatusFilter('all');
+    setShowExplanations(true);
+    setHapticFeedback(true);
+    setSoundEffects(true);
+    setNotificationsEnabled(true);
+  };
+
+  // Load settings from AsyncStorage when user changes
   useEffect(() => {
     const loadSettings = async () => {
-      debug('settings', 'Loading settings from AsyncStorage...');
+      setIsLoaded(false);
+      
+      if (!user) {
+        // No user logged in, use defaults
+        resetToDefaults();
+        setIsLoaded(true);
+        return;
+      }
+
+      debug('settings', `Loading settings for user: ${user.uid}`);
       try {
-        const stored = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
+        const settingsKey = getSettingsKey();
+        const stored = await AsyncStorage.getItem(settingsKey);
         if (stored) {
           const settings: StoredSettings = JSON.parse(stored);
           debugSuccess('settings', 'Settings loaded:', {
@@ -169,21 +203,23 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
           }
         } else {
           debug('settings', 'No stored settings found, using defaults');
+          resetToDefaults();
         }
       } catch (error) {
         debugError('settings', 'Failed to load settings:', error);
+        resetToDefaults();
       } finally {
         setIsLoaded(true);
       }
     };
     
     loadSettings();
-  }, []);
+  }, [user?.uid]);
 
   // Save settings to AsyncStorage whenever they change
   useEffect(() => {
-    // Don't save until initial load is complete
-    if (!isLoaded) return;
+    // Don't save until initial load is complete or if no user
+    if (!isLoaded || !user) return;
     
     const saveSettings = async () => {
       try {
@@ -198,8 +234,9 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
           soundEffects,
           notificationsEnabled,
         };
-        await AsyncStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
-        debug('settings', 'Settings saved to AsyncStorage');
+        const settingsKey = getSettingsKey();
+        await AsyncStorage.setItem(settingsKey, JSON.stringify(settings));
+        debug('settings', `Settings saved for user: ${user.uid}`);
       } catch (error) {
         debugError('settings', 'Failed to save settings:', error);
       }
@@ -217,6 +254,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
     soundEffects,
     notificationsEnabled,
     isLoaded,
+    user?.uid,
   ]);
 
   // Toggle a single topic

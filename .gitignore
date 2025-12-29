@@ -6,7 +6,7 @@ admin
 .expo/
 dist/
 web-build/
-*.plist
+
 # Native builds
 .env.example
 .firebase/
@@ -33,7 +33,6 @@ env
 **/firebase-adminsdk-*.json
 **/*-firebase-adminsdk-*.json
 functions/*-firebase-adminsdk-*.json
-google-services.json
 # Metro
 .metro-health-check*
 
@@ -63,3 +62,5 @@ Thumbs.db
 
 expo-env.d.ts
 # @end expo-cli
+
+build-*

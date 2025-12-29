@@ -16,6 +16,8 @@ import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useSettings } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
 import { getUserProfile, UserProfile } from '@/services/userService';
+import { debugError } from '@/utils/debug';
+// Loading now happens on dedicated /loading page
 
 type IoniconsName = keyof typeof Ionicons.glyphMap;
 
@@ -67,8 +69,7 @@ export default function LandingPage() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [emailVerified, setEmailVerified] = useState(true); // Default to true to avoid flashing banner
   const [showVerificationBanner, setShowVerificationBanner] = useState(false);
-
-  // Fetch user profile
+  // Load user profile when screen appears
   useEffect(() => {
     const fetchProfile = async () => {
       if (user?.uid) {
@@ -76,7 +77,7 @@ export default function LandingPage() {
           const profile = await getUserProfile(user.uid);
           setUserProfile(profile);
         } catch (error) {
-          console.error('Error fetching profile:', error);
+          debugError('firebase', 'Error fetching profile:', error);
         }
       }
     };
@@ -99,9 +100,6 @@ export default function LandingPage() {
 
   // Get display name
   const displayName = userProfile?.name 
-    || user?.email?.split('@')[0] 
-    || 'there';
-
 
   const handleStartPractice = async () => {
     if (hapticFeedback) {
@@ -193,7 +191,7 @@ export default function LandingPage() {
           {isAuthenticated && (
             <View style={styles.welcomeContainer}>
               <Text style={styles.welcomeText}>
-                Hey, <Text style={styles.welcomeName}>{displayName}</Text> 👋
+                Welcome back, <Text style={styles.welcomeName}>{displayName}</Text>
               </Text>
             </View>
           )}
@@ -201,7 +199,7 @@ export default function LandingPage() {
           {/* Logo */}
           <View style={styles.logoContainer}>
             <Image 
-              source={require('@/assets/icons/icon.png')} 
+              source={require('@/assets/icons/in-app-icon.png')} 
               style={styles.logoImage}
               resizeMode="contain"
             />
@@ -209,7 +207,7 @@ export default function LandingPage() {
           
           {/* Tagline */}
           <Text style={styles.tagline}>
-            Master coding interviews,{'\n'}one swipe at a time
+            Master coding interviews, one swipe at a time
           </Text>
 
           {/* Filter chips */}
@@ -387,12 +385,12 @@ const styles = StyleSheet.create({
     color: colors.warning,
   },
   loginButton: {
-    backgroundColor: colors.card,
-    paddingHorizontal: spacing.base,
+    backgroundColor: colors.cardSubtle,
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
     borderWidth: 1,
-    borderColor: colors.primary + '40',
+    borderColor: 'rgba(0, 255, 148, 0.2)',
   },
   loginButtonPlaceholder: {
     // Empty placeholder to maintain header layout when signed in
@@ -408,70 +406,78 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   headerButton: {
-    width: 44,
-    height: 44,
-    borderRadius: borderRadius.lg,
-    backgroundColor: 'rgba(22, 22, 24, 0.9)',
+    width: 40,
+    height: 40,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.cardSubtle,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
   },
   
   // Welcome Message
   heroSection: {
     alignItems: 'center',
-    marginBottom: spacing['2xl'],
-    paddingTop: spacing.md,
+    marginBottom: spacing.xl,
+    paddingTop: spacing.lg,
   },
   welcomeContainer: {
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
   },
   welcomeText: {
-    fontSize: typography.fontSize.lg,
+    fontSize: typography.fontSize.base,
     fontWeight: '400',
     color: colors.textSecondary,
     textAlign: 'center',
   },
   welcomeName: {
     fontWeight: '600',
-    color: colors.textPrimary,
+    color: colors.primary,
   },
   logoContainer: {
-    width: 72,
-    height: 72,
+    width: 64,
+    height: 64,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
+    backgroundColor: 'transparent',
   },
   logoImage: {
-    width: 72,
-    height: 72,
+    width: 64,
+    height: 64,
+    backgroundColor: 'transparent',
   },
   tagline: {
-    fontSize: typography.fontSize.md,
+    fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
     textAlign: 'center',
-    lineHeight: typography.fontSize.md * 1.5,
-    marginBottom: spacing.xl,
+    lineHeight: typography.fontSize.sm * 1.4,
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
   },
   filterTags: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.sm,
+    gap: spacing.md,
+    backgroundColor: colors.cardSubtle,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   filterTag: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
   },
   filterTagDivider: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.textMuted,
+    width: 1,
+    height: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   filterTagText: {
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.xs,
     color: colors.textMuted,
     fontWeight: '500',
   },
@@ -480,15 +486,10 @@ const styles = StyleSheet.create({
   },
   startButton: {
     backgroundColor: colors.primary,
-    borderRadius: borderRadius.lg,
+    borderRadius: borderRadius.md,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.xl,
+    paddingHorizontal: spacing.lg,
     alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
   },
   startButtonContent: {
     flexDirection: 'row',
@@ -496,15 +497,14 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   startButtonText: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: '700',
+    fontSize: typography.fontSize.base,
+    fontWeight: '600',
     color: colors.textInverse,
-    letterSpacing: -0.3,
   },
   startButtonHint: {
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.xs,
     color: colors.textInverse,
-    opacity: 0.7,
+    opacity: 0.8,
     marginTop: spacing.xs,
   },
   statsContainer: {
@@ -539,12 +539,12 @@ const styles = StyleSheet.create({
     marginBottom: spacing.xl,
   },
   sectionTitle: {
-    fontSize: typography.fontSize.md,
+    fontSize: typography.fontSize.sm,
     fontWeight: '600',
     color: colors.textSecondary,
     marginBottom: spacing.md,
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
   featuresGrid: {
     flexDirection: 'row',
@@ -553,17 +553,17 @@ const styles = StyleSheet.create({
   },
   featureCard: {
     width: (SCREEN_WIDTH - spacing.xl * 2 - spacing.sm) / 2,
-    backgroundColor: colors.card,
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.borderSubtle,
   },
   featureIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.primary + '12',
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: spacing.sm,
@@ -575,9 +575,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   featureDescription: {
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.xs,
     color: colors.textMuted,
-    lineHeight: typography.fontSize.sm * typography.lineHeight.relaxed,
+    lineHeight: typography.fontSize.xs * 1.4,
   },
   quickActions: {
     gap: spacing.sm,
@@ -586,17 +586,19 @@ const styles = StyleSheet.create({
   quickActionButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
     gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
   },
   quickActionIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: colors.primary + '10',
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 255, 148, 0.1)',
     justifyContent: 'center',
     alignItems: 'center',
   },

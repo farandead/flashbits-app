@@ -2,6 +2,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NOTIFICATION_MESSAGES, NOTIFICATION_CONFIG } from '@/constants/notifications';
+import { debugError } from '@/utils/debug';
 
 // Configure how notifications should be handled when app is in foreground
 Notifications.setNotificationHandler({
@@ -60,7 +61,7 @@ class NotificationService {
 
       return finalStatus === 'granted';
     } catch (error) {
-      console.error('Error requesting notification permissions:', error);
+      debugError('api', 'Error requesting notification permissions:', error);
       return false;
     }
   }
@@ -76,7 +77,7 @@ class NotificationService {
       }
       return DEFAULT_SETTINGS;
     } catch (error) {
-      console.error('Error getting notification settings:', error);
+      debugError('storage', 'Error getting notification settings:', error);
       return DEFAULT_SETTINGS;
     }
   }
@@ -90,7 +91,7 @@ class NotificationService {
       // Re-schedule notifications with new settings
       await this.scheduleAllNotifications(settings);
     } catch (error) {
-      console.error('Error saving notification settings:', error);
+      debugError('storage', 'Error saving notification settings:', error);
     }
   }
 
@@ -103,7 +104,7 @@ class NotificationService {
       this.scheduledNotificationIds = [];
       await AsyncStorage.setItem(NOTIFICATION_IDS_KEY, JSON.stringify([]));
     } catch (error) {
-      console.error('Error canceling notifications:', error);
+      debugError('api', 'Error canceling notifications:', error);
     }
   }
 
@@ -167,7 +168,7 @@ class NotificationService {
 
       return id;
     } catch (error) {
-      console.error('Error scheduling daily reminder:', error);
+      debugError('api', 'Error scheduling daily reminder:', error);
       return null;
     }
   }
@@ -194,7 +195,7 @@ class NotificationService {
 
       return id;
     } catch (error) {
-      console.error('Error scheduling streak reminder:', error);
+      debugError('api', 'Error scheduling streak reminder:', error);
       return null;
     }
   }
@@ -225,7 +226,7 @@ class NotificationService {
         ids.push(id);
       }
     } catch (error) {
-      console.error('Error scheduling motivational notifications:', error);
+      debugError('api', 'Error scheduling motivational notifications:', error);
     }
 
     return ids;
@@ -247,7 +248,7 @@ class NotificationService {
         trigger: null, // Send immediately
       });
     } catch (error) {
-      console.error('Error sending immediate notification:', error);
+      debugError('api', 'Error sending immediate notification:', error);
     }
   }
 
@@ -258,7 +259,7 @@ class NotificationService {
     try {
       return await Notifications.getAllScheduledNotificationsAsync();
     } catch (error) {
-      console.error('Error getting scheduled notifications:', error);
+      debugError('api', 'Error getting scheduled notifications:', error);
       return [];
     }
   }

@@ -11,6 +11,7 @@ import {
 import { db } from '@/config/firebase';
 import { Topic } from '@/data/questions';
 import { generateCacheKey, getCachedData, setCachedData, clearCacheByPrefix } from './cacheService';
+import { debug, debugError } from '@/utils/debug';
 
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes cache TTL for topics (longer since they change less frequently)
 
@@ -47,7 +48,7 @@ export const getTopics = async (): Promise<TopicConfig[]> => {
     const querySnapshot = await getDocs(q);
     
     if (querySnapshot.empty) {
-      console.log('No topics found in Firestore, returning default topics');
+      debug('questions', 'No topics found in Firestore, returning default topics');
       const defaultTopics = getDefaultTopics();
       
       // Cache default topics
@@ -81,7 +82,7 @@ export const getTopics = async (): Promise<TopicConfig[]> => {
     
     return filteredTopics;
   } catch (error) {
-    console.error('Error fetching topics from Firestore:', error);
+    debugError('questions', 'Error fetching topics from Firestore:', error);
     // Fallback to default topics on error
     const defaultTopics = getDefaultTopics();
     
@@ -130,7 +131,7 @@ export const getTopic = async (topicId: Topic): Promise<TopicConfig | null> => {
     }
     return null;
   } catch (error) {
-    console.error('Error fetching topic:', error);
+    debugError('questions', 'Error fetching topic:', error);
     return null;
   }
 };

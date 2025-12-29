@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Question, Topic, Difficulty, Company, QuestionCategory, questions as mockQuestions } from '@/data/questions';
+import { Question, Topic, Difficulty, Company, QuestionCategory } from '@/data/questions';
 import {
   fetchAllQuestions,
   fetchAllQuestionsLegacy,
@@ -9,6 +9,7 @@ import {
 } from '@/services/questionsService';
 import type { QueryDocumentSnapshot } from 'firebase/firestore';
 import { useDebounce, useDebounceArray } from '@/utils/debounce';
+import { debugError } from '@/utils/debug';
 
 interface UseQuestionsOptions {
   topics?: Topic[];
@@ -147,30 +148,9 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
           lastDocRef.current = paginatedResult.lastDoc;
           setHasMore(paginatedResult.hasMore);
           
-          // If no questions from Firestore, fallback to mock
+          // If no questions from Firestore, just show empty (offline storage is handled in service)
           if (paginatedResult.questions.length === 0 && !isLoadMore) {
-            let fallbackQuestions = mockQuestions;
-            if (activeTopics.length > 0) {
-              fallbackQuestions = fallbackQuestions.filter(q => activeTopics.includes(q.topic));
-            }
-            if (activeDifficulties.length > 0) {
-              fallbackQuestions = fallbackQuestions.filter(q => activeDifficulties.includes(q.difficulty));
-            }
-            if (activeCategory !== 'all') {
-              fallbackQuestions = fallbackQuestions.filter(q => (q.category || 'general') === activeCategory);
-            }
-            // Use original companies for filtering (not debounced)
-            const activeCompanies = companies || [];
-            if (activeCompanies.length > 0) {
-              fallbackQuestions = fallbackQuestions.filter(q => {
-                if (!q.companies || q.companies.length === 0) return true;
-                return q.companies.some(company => activeCompanies.includes(company));
-              });
-            }
-            if (shuffle) {
-              fallbackQuestions = shuffleArray(fallbackQuestions);
-            }
-            setQuestions(fallbackQuestions);
+            setQuestions([]);
             setHasMore(false);
           } else {
             // Apply company filter and shuffle to fetched questions
@@ -200,20 +180,8 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
           fetchedQuestions = await fetchAllQuestionsLegacy();
         }
         
-        // Fallback to mock if empty
-        if (fetchedQuestions.length === 0) {
-          fetchedQuestions = mockQuestions;
-          
-          if (activeTopics.length > 0) {
-            fetchedQuestions = fetchedQuestions.filter(q => activeTopics.includes(q.topic));
-          }
-          if (activeDifficulties.length > 0) {
-            fetchedQuestions = fetchedQuestions.filter(q => activeDifficulties.includes(q.difficulty));
-          }
-          if (activeCategory !== 'all') {
-            fetchedQuestions = fetchedQuestions.filter(q => (q.category || 'general') === activeCategory);
-          }
-        }
+        // If empty, just use empty array (offline storage is handled in service)
+        // No fallback to mock questions
         
         fetchedQuestions = applyCompanyFilter(fetchedQuestions);
         if (shuffle) {
@@ -224,29 +192,11 @@ export const useQuestions = (options: UseQuestionsOptions = {}): UseQuestionsRet
         setHasMore(false);
       }
     } catch (err) {
-      console.error('Error in useQuestions:', err);
+      debugError('questions', 'Error in useQuestions:', err);
       setError('Failed to load questions');
       
-      // Fallback to mock data on error
-      let fallbackQuestions = mockQuestions;
-      const activeTopics = !hasMounted.current ? (topics || []) : debouncedTopics;
-      const activeDifficulties = !hasMounted.current ? (difficulties || []) : debouncedDifficulties;
-      const activeCategory = !hasMounted.current ? (category || 'all') : debouncedCategory;
-      
-      if (activeTopics.length > 0) {
-        fallbackQuestions = fallbackQuestions.filter(q => activeTopics.includes(q.topic));
-      }
-      if (activeDifficulties.length > 0) {
-        fallbackQuestions = fallbackQuestions.filter(q => activeDifficulties.includes(q.difficulty));
-      }
-      if (activeCategory !== 'all') {
-        fallbackQuestions = fallbackQuestions.filter(q => (q.category || 'general') === activeCategory);
-      }
-      fallbackQuestions = applyCompanyFilter(fallbackQuestions);
-      if (shuffle) {
-        fallbackQuestions = shuffleArray(fallbackQuestions);
-      }
-      setQuestions(fallbackQuestions);
+      // No fallback to mock data - just show empty (offline storage is handled in service)
+      setQuestions([]);
       setHasMore(false);
     } finally {
       setIsLoading(false);

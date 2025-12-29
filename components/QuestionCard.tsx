@@ -7,6 +7,12 @@ import {
   Dimensions,
   Linking,
   Pressable,
+  Modal,
+  TextInput,
+  Alert,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import Animated, {
   FadeIn,
@@ -15,6 +21,9 @@ import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { Question, topicColors, difficultyColors, QuestionCategory } from '@/data/questions';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
+import { submitQuestionReport, ReportType } from '@/services/reportService';
+import { useAuth } from '@/context/AuthContext';
+import { sanitizeString } from '@/utils/sanitize';
 
 // Category display configuration
 const CATEGORY_CONFIG: Record<QuestionCategory, { label: string; color: string }> = {
@@ -68,10 +77,18 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   wasAnsweredCorrectly = false,
   hapticFeedback = true, // Default to true
 }) => {
+  const { user } = useAuth();
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [hasAnswered, setHasAnswered] = useState(false);
   const [showExplanation, setShowExplanation] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [selectedReportType, setSelectedReportType] = useState<ReportType | null>(null);
+  const [reportDescription, setReportDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [descriptionError, setDescriptionError] = useState<string | null>(null);
   const explanationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const MAX_DESCRIPTION_LENGTH = 500;
 
   // Reset state when question changes
   useEffect(() => {
@@ -169,6 +186,80 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
 
     return [styles.optionText, styles.optionTextDisabled];
   };
+
+  const handleReportPress = async () => {
+    if (hapticFeedback) {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setShowReportModal(true);
+    setDescriptionError(null);
+  };
+
+  const handleDescriptionChange = (text: string) => {
+    // Sanitize input in real-time
+    const sanitized = sanitizeString(text, MAX_DESCRIPTION_LENGTH);
+    setReportDescription(sanitized);
+    
+    // Clear error if input is now valid
+    if (descriptionError && sanitized.length <= MAX_DESCRIPTION_LENGTH) {
+      setDescriptionError(null);
+    }
+  };
+
+  const handleReportSubmit = async () => {
+    if (!selectedReportType) {
+      Alert.alert('Select Issue', 'Please select the type of issue you found.');
+      return;
+    }
+
+    // Validate description length
+    const trimmedDescription = reportDescription.trim();
+    if (trimmedDescription.length > MAX_DESCRIPTION_LENGTH) {
+      setDescriptionError(`Description must be ${MAX_DESCRIPTION_LENGTH} characters or less.`);
+      return;
+    }
+
+    // Sanitize description before submission
+    const sanitizedDescription = sanitizeString(trimmedDescription, MAX_DESCRIPTION_LENGTH);
+    
+    setIsSubmitting(true);
+    setDescriptionError(null);
+
+    try {
+      const result = await submitQuestionReport(question.id, selectedReportType, {
+        questionText: question.question,
+        topic: question.topic,
+        difficulty: question.difficulty,
+        description: sanitizedDescription || undefined,
+        userId: user?.uid,
+        userEmail: user?.email || undefined,
+      });
+
+      if (result.success) {
+        if (hapticFeedback) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+        Alert.alert('Report Submitted', 'Thank you for your feedback! We\'ll review it soon.');
+        setShowReportModal(false);
+        setSelectedReportType(null);
+        setReportDescription('');
+      } else {
+        Alert.alert('Error', result.error || 'Failed to submit report. Please try again.');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const reportTypes: { type: ReportType; label: string; icon: string }[] = [
+    { type: 'wrong_answer', label: 'Wrong Answer', icon: 'close-circle' },
+    { type: 'incorrect_explanation', label: 'Incorrect Explanation', icon: 'document-text' },
+    { type: 'typo', label: 'Typo or Grammar', icon: 'create' },
+    { type: 'unclear_question', label: 'Unclear Question', icon: 'help-circle' },
+    { type: 'other', label: 'Other Issue', icon: 'ellipsis-horizontal' },
+  ];
 
   return (
     <View style={styles.container}>
@@ -268,9 +359,9 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
           )}
         </View>
         
-        {/* Problem Name & LeetCode Link */}
-        {question.problemName && (
-          <View style={styles.problemRow}>
+        {/* Problem Name & LeetCode Link & Report Button */}
+        <View style={styles.problemRow}>
+          {question.problemName ? (
             <View style={styles.problemInfo}>
               {question.problemNumber && (
                 <Text style={styles.problemNumber}>#{question.problemNumber}</Text>
@@ -279,6 +370,10 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
                 {question.problemName}
               </Text>
             </View>
+          ) : (
+            <View style={styles.problemInfo} />
+          )}
+          <View style={styles.headerActions}>
             {getLeetCodeUrl(question.problemName, question.problemNumber) && (
               <Pressable
                 style={styles.leetcodeButton}
@@ -294,8 +389,15 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
                 <Text style={styles.leetcodeButtonText}>LeetCode</Text>
               </Pressable>
             )}
+            <Pressable
+              style={styles.reportButton}
+              onPress={handleReportPress}
+            >
+              <Ionicons name="alert-circle-outline" size={14} color={colors.textMuted} />
+              <Text style={styles.reportButtonText}>Report</Text>
+            </Pressable>
           </View>
-        )}
+        </View>
       </View>
 
       {/* Question */}
@@ -381,6 +483,136 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
           <Text style={styles.swipeHintMinimal}>Swipe up for next</Text>
         </Animated.View>
       )}
+
+      {/* Report Modal */}
+      <Modal
+        visible={showReportModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowReportModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        >
+          <Pressable
+            style={styles.modalOverlay}
+            onPress={() => {
+              setShowReportModal(false);
+              setSelectedReportType(null);
+              setReportDescription('');
+            }}
+          >
+            <Pressable
+              style={styles.modalContent}
+              onPress={(e) => e.stopPropagation()}
+            >
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={styles.modalScrollContent}
+                style={styles.modalScrollView}
+              >
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalTitle}>Report Issue</Text>
+                  <Pressable
+                    style={styles.modalCloseButton}
+                    onPress={() => {
+                      setShowReportModal(false);
+                      setSelectedReportType(null);
+                      setReportDescription('');
+                    }}
+                  >
+                    <Ionicons name="close" size={16} color={colors.textMuted} />
+                  </Pressable>
+                </View>
+
+                <Text style={styles.modalSubtitle}>What's wrong with this question?</Text>
+
+                <View style={styles.reportOptionsContainer}>
+                  {reportTypes.map((report) => (
+                    <Pressable
+                      key={report.type}
+                      style={[
+                        styles.reportOption,
+                        selectedReportType === report.type && styles.reportOptionSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedReportType(report.type);
+                        if (hapticFeedback) {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        }
+                      }}
+                    >
+                      <Ionicons
+                        name={report.icon as any}
+                        size={14}
+                        color={selectedReportType === report.type ? colors.primary : colors.textMuted}
+                      />
+                      <Text
+                        style={[
+                          styles.reportOptionText,
+                          selectedReportType === report.type && styles.reportOptionTextSelected,
+                        ]}
+                      >
+                        {report.label}
+                      </Text>
+                      {selectedReportType === report.type && (
+                        <Ionicons name="checkmark" size={16} color={colors.primary} />
+                      )}
+                    </Pressable>
+                  ))}
+                </View>
+
+                <View style={styles.descriptionContainer}>
+                  <View style={styles.descriptionHeader}>
+                    <Text style={styles.descriptionLabel}>Additional details (optional)</Text>
+                    <Text style={[
+                      styles.characterCount,
+                      reportDescription.length > MAX_DESCRIPTION_LENGTH && styles.characterCountError
+                    ]}>
+                      {reportDescription.length}/{MAX_DESCRIPTION_LENGTH}
+                    </Text>
+                  </View>
+                  <TextInput
+                    style={[
+                      styles.descriptionInput,
+                      descriptionError && styles.descriptionInputError
+                    ]}
+                    placeholder="Tell us more about the issue..."
+                    placeholderTextColor={colors.textMuted}
+                    value={reportDescription}
+                    onChangeText={handleDescriptionChange}
+                    multiline
+                    numberOfLines={3}
+                    textAlignVertical="top"
+                    maxLength={MAX_DESCRIPTION_LENGTH + 50} // Allow slightly more for real-time sanitization
+                  />
+                  {descriptionError && (
+                    <Text style={styles.errorText}>{descriptionError}</Text>
+                  )}
+                </View>
+
+                <Pressable
+                  style={[
+                    styles.submitButton,
+                    (!selectedReportType || isSubmitting) && styles.submitButtonDisabled,
+                  ]}
+                  onPress={handleReportSubmit}
+                  disabled={!selectedReportType || isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <Text style={styles.submitButtonText}>Submitting...</Text>
+                  ) : (
+                    <Text style={styles.submitButtonText}>Submit Report</Text>
+                  )}
+                </Pressable>
+              </ScrollView>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 };
@@ -491,6 +723,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     gap: 4,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  reportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    backgroundColor: colors.cardSubtle,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+  },
+  reportButtonText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textMuted,
   },
   problemNumber: {
     fontSize: typography.fontSize.xs,
@@ -670,6 +923,154 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.textMuted,
     fontStyle: 'italic',
+  },
+  // Report Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.lg,
+  },
+  modalContent: {
+    width: '100%',
+    maxWidth: SCREEN_WIDTH - (spacing.sm * 2),
+    maxHeight: '90%',
+    backgroundColor: colors.background,
+    borderRadius: borderRadius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    overflow: 'hidden',
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+  },
+  modalScrollView: {
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+  },
+  modalScrollContent: {
+    padding: spacing.md,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  modalTitle: {
+    fontSize: typography.fontSize.base,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  modalCloseButton: {
+    width: 28,
+    height: 28,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalSubtitle: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
+    marginBottom: spacing.md,
+  },
+  reportOptionsContainer: {
+    marginBottom: spacing.sm,
+  },
+  reportOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.xs,
+    backgroundColor: colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    minHeight: 40,
+  },
+  reportOptionSelected: {
+    backgroundColor: colors.primary + '12',
+    borderColor: colors.primary + '40',
+  },
+  reportOptionText: {
+    flex: 1,
+    fontSize: typography.fontSize.xs,
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  reportOptionTextSelected: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  descriptionContainer: {
+    marginBottom: spacing.md,
+  },
+  descriptionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.xs,
+  },
+  descriptionLabel: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '500',
+    color: colors.textSecondary,
+  },
+  characterCount: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
+    fontWeight: '500',
+  },
+  characterCountError: {
+    color: colors.incorrect,
+  },
+  descriptionInput: {
+    backgroundColor: colors.cardSubtle,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    fontSize: typography.fontSize.xs,
+    color: colors.textPrimary,
+    minHeight: 70,
+    lineHeight: typography.fontSize.xs * 1.4,
+  },
+  descriptionInputError: {
+    borderColor: colors.incorrect + '60',
+    backgroundColor: colors.incorrectBg + '20',
+  },
+  errorText: {
+    fontSize: typography.fontSize.xs,
+    color: colors.incorrect,
+    marginTop: spacing.xs,
+    fontWeight: '500',
+  },
+  submitButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+  },
+  submitButtonDisabled: {
+    opacity: 0.5,
+  },
+  submitButtonText: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: '600',
+    color: colors.background,
   },
 });
 

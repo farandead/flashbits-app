@@ -289,3 +289,4 @@ console.log('Saving:', subscriptionData);
 
 The sync happens automatically and transparently - you don't need to do anything special. The pro status will be available in Firestore for analytics, backend services, and as a backup if RevenueCat is unavailable.
 
+

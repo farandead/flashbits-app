@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getTopics, TopicConfig } from '@/services/topicsService';
+import { debugError } from '@/utils/debug';
 
 interface UseTopicsReturn {
   topics: TopicConfig[];
@@ -25,7 +26,7 @@ export const useTopics = (): UseTopicsReturn => {
       const fetchedTopics = await getTopics();
       setTopics(fetchedTopics);
     } catch (err) {
-      console.error('Error in useTopics:', err);
+      debugError('questions', 'Error in useTopics:', err);
       setError('Failed to load topics');
       // Service already handles fallback, but set empty array if something goes wrong
       setTopics([]);
