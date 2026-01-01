@@ -1009,7 +1009,7 @@ export default function LoginScreen() {
       {/* Auth Buttons */}
       <View style={styles.authButtonsContainer}>
         {/* Email Sign In */}
-        {/* <Pressable
+        <Pressable
           style={styles.authButton}
           onPress={() => {
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1019,7 +1019,7 @@ export default function LoginScreen() {
         >
           <Ionicons name="mail-outline" size={18} color={colors.textPrimary} />
           <Text style={styles.authButtonText}>Continue with Email</Text>
-        </Pressable> */}
+        </Pressable>
 
         {/* Google Sign In - Only show if available (requires development build) */}
         {GoogleSignin && (
@@ -1190,32 +1190,49 @@ export default function LoginScreen() {
   const renderForgotPasswordConfirmation = () => (
     <View style={styles.phoneContainer}>
       <View style={styles.confirmationContainer}>
-        <View style={styles.confirmationIconContainer}>
-          <Ionicons name="mail-outline" size={48} color={colors.primary} />
-        </View>
-        
-        <Text style={styles.phoneTitle}>Check Your Email</Text>
-        <Text style={styles.phoneSubtitle}>
-          We've sent a password reset link to{'\n'}
-          <Text style={styles.emailHighlight}>{forgotPasswordEmail}</Text>
-        </Text>
-        
-        <Text style={styles.confirmationInstructions}>
-          Click the link in the email to reset your password. If you don't see it, check your spam folder.
-        </Text>
-
-        <Pressable
-          style={styles.submitButton}
-          onPress={() => {
-            const emailToPrefill = forgotPasswordEmail;
-            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            setAuthStep('email-input');
-            setEmail(emailToPrefill); // Pre-fill email for sign in
-            setForgotPasswordEmail('');
-          }}
+        <Animated.View 
+          entering={FadeIn.duration(300).delay(100)}
+          style={styles.confirmationIconContainer}
         >
-          <Text style={styles.submitButtonText}>Back to Sign In</Text>
-        </Pressable>
+          <Ionicons name="mail-outline" size={40} color={colors.primary} />
+        </Animated.View>
+        
+        <Animated.View 
+          entering={FadeIn.duration(300).delay(200)}
+          style={styles.confirmationTextContainer}
+        >
+          <Text style={styles.confirmationTitle}>Check your email</Text>
+          <Text style={styles.confirmationSubtitle}>
+            We sent a password reset link to
+          </Text>
+          <Text style={styles.confirmationEmail}>{forgotPasswordEmail}</Text>
+        </Animated.View>
+        
+        <Animated.View 
+          entering={FadeIn.duration(300).delay(300)}
+          style={styles.confirmationActions}
+        >
+          <Text style={styles.confirmationHint}>
+            Click the link in the email to reset your password
+          </Text>
+          
+          <Pressable
+            style={({ pressed }) => [
+              styles.confirmationBackButton,
+              pressed && styles.confirmationBackButtonPressed,
+            ]}
+            onPress={async () => {
+              await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              const emailToPrefill = forgotPasswordEmail;
+              LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+              setAuthStep('email-input');
+              setEmail(emailToPrefill); // Pre-fill email for sign in
+              setForgotPasswordEmail('');
+            }}
+          >
+            <Text style={styles.confirmationBackButtonText}>Back to Sign In</Text>
+          </Pressable>
+        </Animated.View>
       </View>
     </View>
   );
@@ -1659,23 +1676,79 @@ const styles = StyleSheet.create({
   confirmationContainer: {
     alignItems: 'center',
     width: '100%',
+    paddingVertical: spacing['2xl'],
   },
   confirmationIconContainer: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: 'rgba(0, 255, 148, 0.1)',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(0, 255, 148, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: spacing.xl,
+    marginBottom: spacing['2xl'],
+    borderWidth: 1,
+    borderColor: 'rgba(0, 255, 148, 0.15)',
   },
-  confirmationInstructions: {
-    fontSize: typography.fontSize.sm,
+  confirmationTextContainer: {
+    alignItems: 'center',
+    width: '100%',
+    marginBottom: spacing['2xl'],
+  },
+  confirmationTitle: {
+    fontSize: typography.fontSize['2xl'],
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+    textAlign: 'center',
+    letterSpacing: -0.5,
+  },
+  confirmationSubtitle: {
+    fontSize: typography.fontSize.base,
     color: colors.textSecondary,
     textAlign: 'center',
-    lineHeight: typography.fontSize.sm * 1.5,
-    marginBottom: spacing.xl,
-    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    lineHeight: typography.fontSize.base * 1.5,
+  },
+  confirmationEmail: {
+    fontSize: typography.fontSize.base,
+    color: colors.primary,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: spacing.xs,
+  },
+  confirmationActions: {
+    width: '100%',
+    alignItems: 'center',
+    marginTop: spacing.xl,
+  },
+  confirmationHint: {
+    fontSize: typography.fontSize.sm,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: typography.fontSize.sm * 1.6,
+    marginBottom: spacing['2xl'],
+    paddingHorizontal: spacing.lg,
+  },
+  confirmationBackButton: {
+    width: '100%',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.md,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmationBackButtonPressed: {
+    backgroundColor: colors.cardSubtle,
+    borderColor: colors.borderFocus,
+    opacity: 0.7,
+  },
+  confirmationBackButtonText: {
+    fontSize: typography.fontSize.base,
+    color: colors.textSecondary,
+    fontWeight: '500',
   },
   emailHighlight: {
     color: colors.primary,

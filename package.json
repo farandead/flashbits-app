@@ -8,10 +8,6 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "eslint .",
-    "test:e2e:ios": "detox test --configuration ios.sim.debug",
-    "test:e2e:android": "detox test --configuration android.emu.debug",
-    "test:e2e:ios:build": "detox build --configuration ios.sim.debug",
-    "test:e2e:android:build": "detox build --configuration android.emu.debug",
     "build:web": "npx expo export:web",
     "deploy:web": "npm run build:web && firebase deploy --only hosting",
     "deploy:all": "npm run build:web && firebase deploy",
@@ -61,7 +57,6 @@
     "@babel/core": "^7.25.0",
     "@types/react": "~19.1.10",
     "@types/react-test-renderer": "^18.3.1",
-    "detox": "^20.46.3",
     "typescript": "~5.9.2"
   },
   "private": true
