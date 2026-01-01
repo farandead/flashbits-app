@@ -9,6 +9,6 @@ export const SUPPORT_CONFIG = {
   responseTime: 'We typically respond within 24 hours',
   
   // Web contact page URL
-  contactUrl: 'https://flashbits.app/contact',
+  contactUrl: 'https://flashbits.co/contact',
 };
 

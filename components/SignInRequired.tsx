@@ -28,15 +28,15 @@ export default function SignInRequired({
       style={styles.container}
     >
       <View style={styles.iconContainer}>
-        <Ionicons name="lock-closed" size={48} color={colors.primary} />
+        <Ionicons name="lock-closed" size={24} color={colors.primary} />
       </View>
       
       <Text style={styles.message}>{message}</Text>
       <Text style={styles.description}>{description}</Text>
 
       <Pressable style={styles.signInButton} onPress={handleSignIn}>
-        <Text style={styles.signInButtonText}>Sign In / Sign Up</Text>
-        <Ionicons name="arrow-forward" size={18} color={colors.textInverse} />
+        <Text style={styles.signInButtonText}>Sign In</Text>
+        <Ionicons name="arrow-forward" size={16} color={colors.textInverse} />
       </Pressable>
     </Animated.View>
   );
@@ -48,47 +48,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.xl,
-    paddingBottom: spacing['4xl'],
+    paddingBottom: spacing['2xl'],
   },
   iconContainer: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: `${colors.primary}15`,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
   },
   message: {
-    fontSize: typography.fontSize['2xl'],
-    fontFamily: typography.fontFamily.bold,
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     color: colors.textPrimary,
     textAlign: 'center',
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   description: {
-    fontSize: typography.fontSize.base,
-    fontFamily: typography.fontFamily.regular,
+    fontSize: typography.fontSize.sm,
     color: colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 24,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing['4xl'],
+    lineHeight: typography.fontSize.sm * 1.5,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.xl,
+    maxWidth: 320,
   },
   signInButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.primary,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing['2xl'],
-    borderRadius: borderRadius.lg,
-    gap: spacing.sm,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.xl,
+    borderRadius: borderRadius.md,
+    gap: spacing.xs,
   },
   signInButtonText: {
-    fontSize: typography.fontSize.md,
-    fontFamily: typography.fontFamily.bold,
-    fontWeight: '700',
+    fontSize: typography.fontSize.sm,
+    fontWeight: '600',
     color: colors.textInverse,
   },
 });

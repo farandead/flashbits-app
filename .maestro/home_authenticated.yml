@@ -1,0 +1,42 @@
+appId: com.flashbits.app
+---
+# Test: Home screen for authenticated users
+# Note: This test assumes user is already logged in
+# For a complete flow, you'd need to add login steps first
+- launchApp
+# Wait for app to load
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Loading.*"
+    commands:
+      - waitForAnimationToEnd
+      - waitForAnimationToEnd
+# Wait for home screen to fully load
+- waitForAnimationToEnd
+# Verify home screen elements for authenticated user
+- assertVisible:
+    text: ".*flashbits.*"
+- assertVisible:
+    text: ".*Master coding interviews.*"
+# Verify welcome message (if authenticated)
+- assertVisible:
+    text: ".*Welcome back.*"
+# Verify Start Practice button
+- assertVisible:
+    text: ".*Start Practice.*"
+# Scroll to see features
+- scroll
+# Verify features
+- assertVisible:
+    text: ".*Why flashbits.*"
+- assertVisible:
+    text: ".*No Brainrot.*"
+# Scroll to see quick actions
+- scroll
+# Verify quick actions
+- assertVisible:
+    text: ".*Customize Topics.*"
+- assertVisible:
+    text: ".*View Progress.*"
+

@@ -1,0 +1,49 @@
+appId: com.flashbits.app
+---
+# Test: Home screen for guest users
+- launchApp
+- waitForAnimationToEnd
+# Navigate to home using accessibility identifier (key flow action)
+- tapOn:
+    id: "login-button-guest"
+- waitForAnimationToEnd
+# Wait for loading to complete
+- runFlow:
+    when:
+      visible: ".*Loading.*"
+    commands:
+      - waitForAnimationToEnd
+      - waitForAnimationToEnd
+# Wait for home screen to fully load
+- waitForAnimationToEnd
+# Verify home screen using content (not layout structure)
+- assertVisible:
+    text: ".*flashbits.*"
+- assertVisible:
+    text: ".*Master coding interviews.*"
+- assertVisible:
+    text: ".*Sign In.*"
+# Verify Start Practice button (critical action)
+- assertVisible:
+    text: ".*Start Practice.*"
+# Scroll to see features section
+- scroll
+# Verify features using content
+- assertVisible:
+    text: ".*Why flashbits.*"
+- assertVisible:
+    text: ".*No Brainrot.*"
+- assertVisible:
+    text: ".*Instant Feedback.*"
+- assertVisible:
+    text: ".*Level Up.*"
+- assertVisible:
+    text: ".*Actually Learn.*"
+# Scroll to see quick actions
+- scroll
+# Verify quick actions using content
+- assertVisible:
+    text: ".*Customize Topics.*"
+- assertVisible:
+    text: ".*View Progress.*"
+

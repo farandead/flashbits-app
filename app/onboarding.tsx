@@ -538,31 +538,35 @@ export default function OnboardingScreen() {
     const handleEnableNotifications = async () => {
       try {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        
+        // Request iOS notification permissions
         const hasPermission = await notificationService.requestPermissions();
         
         if (hasPermission) {
-          // Enable notifications with default settings
+          // Permissions granted - enable notifications with default settings
           await notificationService.saveSettings({
             enabled: true,
             dailyReminder: true,
             dailyReminderTime: '09:00',
             practiceStreakReminder: true,
             motivationalNotifications: true,
-          });
+          }, user?.uid);
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         } else {
-          Alert.alert(
-            'Permission Required',
-            'Please enable notifications in your device settings to receive practice reminders.',
-            [{ text: 'OK' }]
-          );
+          // Permission denied - save disabled state
+          await notificationService.saveSettings({
+            enabled: false,
+            dailyReminder: false,
+            dailyReminderTime: '09:00',
+            practiceStreakReminder: false,
+            motivationalNotifications: false,
+          }, user?.uid);
         }
         
-        // Proceed to next step regardless
+        // Proceed to next step regardless of permission result
         handleNext();
       } catch (error) {
         debugError('api', 'Error requesting notifications:', error);
-        // Proceed anyway
         handleNext();
       }
     };

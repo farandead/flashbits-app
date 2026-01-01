@@ -16,6 +16,11 @@ import {
 } from 'react-native';
 import Animated, {
   FadeIn,
+  useSharedValue,
+  useAnimatedStyle,
+  withSequence,
+  withTiming,
+  withSpring,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
@@ -87,6 +92,11 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [descriptionError, setDescriptionError] = useState<string | null>(null);
   const explanationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  // Animation values for wrong answer
+  const shakeX = useSharedValue(0);
+  const scale = useSharedValue(1);
+  const wrongAnswerOpacity = useSharedValue(0);
 
   const MAX_DESCRIPTION_LENGTH = 500;
 
@@ -101,6 +111,10 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
     setSelectedAnswer(null);
     setHasAnswered(false);
     setShowExplanation(false);
+    // Reset animations
+    shakeX.value = 0;
+    scale.value = 1;
+    wrongAnswerOpacity.value = 0;
   }, [question.id]);
 
   // Cleanup timeout on unmount
@@ -135,6 +149,26 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
+      
+      // Trigger shake animation for wrong answer
+      shakeX.value = withSequence(
+        withTiming(-10, { duration: 50 }),
+        withTiming(10, { duration: 50 }),
+        withTiming(-8, { duration: 50 }),
+        withTiming(8, { duration: 50 }),
+        withTiming(-5, { duration: 50 }),
+        withTiming(5, { duration: 50 }),
+        withTiming(0, { duration: 50 })
+      );
+      
+      // Pulse animation
+      scale.value = withSequence(
+        withSpring(1.05, { damping: 8, stiffness: 200 }),
+        withSpring(1, { damping: 8, stiffness: 200 })
+      );
+      
+      // Fade in wrong answer indicator
+      wrongAnswerOpacity.value = withTiming(1, { duration: 200 });
     }
 
     // Show explanation after brief delay
@@ -186,6 +220,23 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
 
     return [styles.optionText, styles.optionTextDisabled];
   };
+
+  // Animated style for wrong answer shake
+  const shakeAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [
+        { translateX: shakeX.value },
+        { scale: scale.value },
+      ],
+    };
+  });
+
+  // Animated style for wrong answer indicator
+  const wrongAnswerIndicatorStyle = useAnimatedStyle(() => {
+    return {
+      opacity: wrongAnswerOpacity.value,
+    };
+  });
 
   const handleReportPress = async () => {
     if (hapticFeedback) {
@@ -413,30 +464,38 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
 
       {/* Options */}
       <View style={styles.optionsContainer}>
-        {question.options?.map((option, index) => (
-          <TouchableOpacity
-            key={index}
-            style={getOptionStyle(index)}
-            onPress={() => handleOptionPress(index)}
-            disabled={hasAnswered}
-            activeOpacity={0.7}
-          >
-            <View style={styles.optionIndexContainer}>
-              <Text style={styles.optionIndex}>
-                {String.fromCharCode(65 + index)}
-              </Text>
-            </View>
-            <Text style={getOptionTextStyle(index)}>{option}</Text>
-            {hasAnswered && isCorrectAnswer(index) && (
-              <Ionicons name="checkmark" size={20} color={colors.correct} />
-            )}
-            {hasAnswered &&
-              isSelectedAnswer(index) &&
-              !isCorrectAnswer(index) && (
-                <Ionicons name="close" size={20} color={colors.incorrect} />
-              )}
-          </TouchableOpacity>
-        ))}
+        {question.options?.map((option, index) => {
+          const isWrongAnswer = hasAnswered && isSelectedAnswer(index) && !isCorrectAnswer(index);
+          
+          return (
+            <Animated.View
+              key={index}
+              style={isWrongAnswer ? shakeAnimatedStyle : undefined}
+            >
+              <TouchableOpacity
+                style={getOptionStyle(index)}
+                onPress={() => handleOptionPress(index)}
+                disabled={hasAnswered}
+                activeOpacity={0.7}
+              >
+                <View style={styles.optionIndexContainer}>
+                  <Text style={styles.optionIndex}>
+                    {String.fromCharCode(65 + index)}
+                  </Text>
+                </View>
+                <Text style={getOptionTextStyle(index)}>{option}</Text>
+                {hasAnswered && isCorrectAnswer(index) && (
+                  <Ionicons name="checkmark" size={20} color={colors.correct} />
+                )}
+                {isWrongAnswer && (
+                  <Animated.View style={wrongAnswerIndicatorStyle}>
+                    <Ionicons name="close" size={20} color={colors.incorrect} />
+                  </Animated.View>
+                )}
+              </TouchableOpacity>
+            </Animated.View>
+          );
+        })}
       </View>
 
       {/* Explanation (shown after answer, if enabled in settings) */}

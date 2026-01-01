@@ -72,7 +72,7 @@ export const NetworkProvider: React.FC<NetworkProviderProps> = ({ children }) =>
             });
         }
         
-        // Trigger sync if we just came back online and user is authenticated
+        // Trigger sync when coming back online and user is authenticated
         const isAuthenticated = !!auth.currentUser;
         if (wasOffline && isAuthenticated && !isSyncingRef.current) {
           debug('network', 'Network restored - triggering data sync...');
@@ -121,9 +121,41 @@ export const NetworkProvider: React.FC<NetworkProviderProps> = ({ children }) =>
     }, 3000);
 
     // Also check when app comes to foreground
-    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
       if (appStateRef.current.match(/inactive|background/) && nextAppState === 'active') {
         debug('network', 'App came to foreground, checking network state...');
+        
+        // Check network state and sync if online
+        try {
+          const networkState = await Network.getNetworkStateAsync();
+          const isOnline = networkState.isConnected && networkState.isInternetReachable === true;
+          const isAuthenticated = !!auth.currentUser;
+          
+          if (isOnline && isAuthenticated && !isSyncingRef.current) {
+            debug('network', 'App came to foreground - triggering data sync...');
+            isSyncingRef.current = true;
+            
+            // Sync in background (don't await to avoid blocking)
+            syncAllData()
+              .then((result) => {
+                if (result.success) {
+                  debugSuccess('sync', 'Data sync completed successfully on foreground');
+                } else {
+                  debugWarn('sync', 'Data sync completed with errors:', result.errors);
+                }
+              })
+              .catch((error) => {
+                debugError('sync', 'Data sync failed on foreground:', error);
+              })
+              .finally(() => {
+                isSyncingRef.current = false;
+              });
+          }
+        } catch (error) {
+          debugWarn('network', 'Error checking network state on foreground:', error);
+        }
+        
+        // Also update the network state
         checkNetworkState();
       }
       appStateRef.current = nextAppState;

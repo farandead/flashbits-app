@@ -1,0 +1,45 @@
+appId: com.flashbits.app
+---
+# Test: Navigation from home screen
+- launchApp
+- waitForAnimationToEnd
+# Navigate to home as guest
+- tapOn: "Continue as Guest"
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Loading.*"
+    commands:
+      - waitForAnimationToEnd
+      - waitForAnimationToEnd
+# Wait for home screen to fully load
+- waitForAnimationToEnd
+# Scroll to ensure all elements are visible
+- scroll
+# Test navigation to Settings
+- tapOn: "Customize Topics"
+- waitForAnimationToEnd
+# Verify we're on settings screen
+- assertVisible:
+    text: ".*Settings.*"
+# Go back to home
+- back
+- waitForAnimationToEnd
+# Scroll again to find View Progress button
+- scroll
+# Test navigation to Progress
+- tapOn: "View Progress"
+- waitForAnimationToEnd
+# Verify we're on progress screen
+- assertVisible:
+    text: ".*Progress.*"
+# Go back to home
+- back
+- waitForAnimationToEnd
+# Test Start Practice button
+- tapOn: "Start Practice"
+- waitForAnimationToEnd
+# Verify we navigated to feed (practice screen)
+- assertVisible:
+    text: ".*flashbits.*"
+

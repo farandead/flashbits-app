@@ -1,0 +1,12 @@
+appId: com.flashbits.app
+---
+# Test: Verify home screen loads correctly
+- launchApp
+- waitForAnimationToEnd
+- assertVisible: 
+    text: ".*flashbits.*"
+- assertVisible:
+    text: ".*No Brainrot.*"
+- assertVisible:
+    text: ".*Swipe to get smarter.*"
+

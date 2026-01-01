@@ -368,8 +368,12 @@ export default function LoginScreen() {
   if (authLoading || checkingAuth) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.loadingText}>Loading...</Text>
+        <ActivityIndicator 
+          size="large" 
+          color={colors.primary}
+          accessibilityLabel="Loading"
+        />
+        <Text style={styles.loadingText} accessibilityLabel="Loading">Loading...</Text>
       </View>
     );
   }
@@ -991,12 +995,13 @@ export default function LoginScreen() {
             source={require('@/assets/icons/in-app-icon.png')} 
             style={styles.logoImage}
             resizeMode="contain"
+            accessibilityLabel="flashbits logo"
           />
         </View>
-        <Text style={styles.appName}>
+        <Text style={styles.appName} accessibilityLabel="flashbits">
           <Text style={styles.appNameAccent}>flash</Text>bits
         </Text>
-        <Text style={styles.tagline}>
+        <Text style={styles.tagline} accessibilityLabel="Master coding interviews, one swipe at a time">
           Master coding interviews, one swipe at a time
         </Text>
       </View>
@@ -1004,7 +1009,7 @@ export default function LoginScreen() {
       {/* Auth Buttons */}
       <View style={styles.authButtonsContainer}>
         {/* Email Sign In */}
-        <Pressable
+        {/* <Pressable
           style={styles.authButton}
           onPress={() => {
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1014,7 +1019,7 @@ export default function LoginScreen() {
         >
           <Ionicons name="mail-outline" size={18} color={colors.textPrimary} />
           <Text style={styles.authButtonText}>Continue with Email</Text>
-        </Pressable>
+        </Pressable> */}
 
         {/* Google Sign In - Only show if available (requires development build) */}
         {GoogleSignin && (
@@ -1022,6 +1027,9 @@ export default function LoginScreen() {
             style={styles.authButton}
             onPress={handleGoogleSignIn}
             disabled={isLoading}
+            accessibilityLabel="Continue with Google"
+            accessibilityIdentifier="login-button-google"
+            accessibilityRole="button"
           >
             <Ionicons name="logo-google" size={18} color={colors.textPrimary} />
             <Text style={styles.authButtonText}>Continue with Google</Text>
@@ -1033,6 +1041,9 @@ export default function LoginScreen() {
           style={styles.authButton}
           onPress={handleGitHubSignIn}
           disabled={isLoading || !request}
+          accessibilityLabel="Continue with GitHub"
+          accessibilityIdentifier="login-button-github"
+          accessibilityRole="button"
         >
           <Ionicons name="logo-github" size={18} color={colors.textPrimary} />
           <Text style={styles.authButtonText}>Continue with GitHub</Text>
@@ -1044,6 +1055,9 @@ export default function LoginScreen() {
             style={styles.authButton}
             onPress={handleAppleSignIn}
             disabled={isLoading}
+            accessibilityLabel="Continue with Apple"
+            accessibilityIdentifier="login-button-apple"
+            accessibilityRole="button"
           >
             <Ionicons name="logo-apple" size={18} color={colors.textPrimary} />
             <Text style={styles.authButtonText}>Continue with Apple</Text>
@@ -1059,7 +1073,13 @@ export default function LoginScreen() {
       </View>
 
       {/* Skip for now */}
-      <Pressable style={styles.skipButton} onPress={handleSkip}>
+      <Pressable 
+        style={styles.skipButton} 
+        onPress={handleSkip}
+        accessibilityLabel="Continue as Guest"
+        accessibilityIdentifier="login-button-guest"
+        accessibilityRole="button"
+      >
         <Text style={styles.skipButtonText}>Continue as Guest</Text>
       </Pressable>
 
@@ -1070,6 +1090,8 @@ export default function LoginScreen() {
           <Text 
             style={styles.termsLink}
             onPress={() => Linking.openURL('https://flashbits.co/terms')}
+            accessibilityLabel="Terms of Service"
+            accessibilityRole="link"
           >
             Terms of Service
           </Text>
@@ -1077,6 +1099,8 @@ export default function LoginScreen() {
           <Text 
             style={styles.termsLink}
             onPress={() => Linking.openURL('https://flashbits.co/privacy')}
+            accessibilityLabel="Privacy Policy"
+            accessibilityRole="link"
           >
             Privacy Policy
           </Text>

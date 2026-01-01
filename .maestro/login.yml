@@ -1,0 +1,24 @@
+appId: com.flashbits.app
+---
+# Test: Verify login screen displays correctly
+# Using accessibility labels for non-critical elements, identifiers only for key actions
+- launchApp
+- waitForAnimationToEnd
+# Verify critical login buttons using accessibility identifiers (key flow)
+- assertVisible:
+    id: "login-button-github"
+- assertVisible:
+    id: "login-button-guest"
+# Verify optional auth buttons (may not be available in all builds)
+- assertVisible:
+    id: "login-button-google"
+    optional: true
+- assertVisible:
+    id: "login-button-apple"
+    optional: true
+# Verify screen content using accessibility labels (not layout-based)
+- assertVisible:
+    text: "flashbits"
+- assertVisible:
+    text: "Master coding interviews"
+

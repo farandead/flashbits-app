@@ -30,6 +30,7 @@ import {
   getOfflineStorageInfo,
   clearOfflineQuestions,
 } from './offlineStorageService';
+import { hasActiveEntitlement } from './revenueCatService';
 
 const QUESTIONS_COLLECTION = 'questions';
 const DEFAULT_PAGE_SIZE = 50; // Number of questions to fetch per batch
@@ -937,6 +938,7 @@ export const seedQuestionsToFirebase = async (): Promise<void> => {
 /**
  * Pre-fetch and save questions for offline use
  * Fetches questions from Firebase and stores them locally for offline access
+ * Only available for Pro subscribers.
  * @param maxQuestions Maximum number of questions to fetch (default: 200)
  * @param replaceExisting If true, replaces existing offline questions. If false, merges with existing.
  */
@@ -945,6 +947,13 @@ export const prefetchQuestionsForOffline = async (
   replaceExisting: boolean = false
 ): Promise<{ success: boolean; count: number; error?: string }> => {
   try {
+    // Check if user has pro subscription
+    const isPro = await hasActiveEntitlement();
+    if (!isPro) {
+      debugWarn('offline', 'Pre-fetching offline questions is only available for Pro subscribers');
+      return { success: false, count: 0, error: 'Offline mode is only available for Pro subscribers' };
+    }
+
     debug('offline', `Pre-fetching up to ${maxQuestions} questions for offline use...`);
     
     // Fetch questions from Firebase

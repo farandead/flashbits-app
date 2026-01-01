@@ -13,7 +13,8 @@ import {
 import { db } from '@/config/firebase';
 import { sanitizeUserProfile } from '@/utils/sanitize';
 import { validateUserProfile, ValidationError } from '@/utils/validateProfile';
-import { debug, debugError } from '@/utils/debug';
+import { debug, debugError, debugSuccess } from '@/utils/debug';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Export ValidationError for use in components
 export { ValidationError };
@@ -50,10 +51,15 @@ export const saveUserProfile = async (
     const sanitizedProfile = sanitizeUserProfile(profile);
     
     const userRef = doc(db, 'users', userId);
-    await setDoc(userRef, {
+    const profileToSave = {
       ...sanitizedProfile,
       updatedAt: new Date().toISOString(),
-    }, { merge: true });
+    };
+    await setDoc(userRef, profileToSave, { merge: true });
+    
+    // Cache the profile for instant access (use the original validated profile)
+    await cacheProfile(userId, profile);
+    
     if (__DEV__) {
       debug('firebase', 'User profile saved successfully');
     }
@@ -67,20 +73,115 @@ export const saveUserProfile = async (
   }
 };
 
+const PROFILE_CACHE_KEY = (userId: string) => `@flashbits_profile:${userId}`;
+// Profile cache TTL: 1 hour (profiles don't change often)
+const PROFILE_CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
+
+interface CachedProfile {
+  profile: UserProfile;
+  timestamp: number;
+}
+
 /**
- * Get user profile from Firestore
+ * Get cached user profile from AsyncStorage (with expiration check)
  */
-export const getUserProfile = async (userId: string): Promise<UserProfile | null> => {
+const getCachedProfile = async (userId: string): Promise<UserProfile | null> => {
   try {
+    const cached = await AsyncStorage.getItem(PROFILE_CACHE_KEY(userId));
+    if (!cached) {
+      return null;
+    }
+
+    const cachedEntry: CachedProfile = JSON.parse(cached);
+    const age = Date.now() - cachedEntry.timestamp;
+    
+    // Check if cache is expired
+    if (age > PROFILE_CACHE_TTL) {
+      debug('cache', `Profile cache expired (age: ${Math.round(age / (60 * 1000))}min, TTL: ${Math.round(PROFILE_CACHE_TTL / (60 * 1000))}min)`);
+      // Remove expired cache
+      await AsyncStorage.removeItem(PROFILE_CACHE_KEY(userId));
+      return null;
+    }
+
+    const remaining = PROFILE_CACHE_TTL - age;
+    debugSuccess('cache', `Using cached profile (age: ${Math.round(age / (60 * 1000))}min, remaining: ${Math.round(remaining / (60 * 1000))}min)`);
+    return cachedEntry.profile;
+  } catch (error) {
+    debugError('cache', 'Error getting cached profile:', error);
+    return null;
+  }
+};
+
+/**
+ * Cache user profile to AsyncStorage with timestamp
+ */
+const cacheProfile = async (userId: string, profile: UserProfile): Promise<void> => {
+  try {
+    const cachedEntry: CachedProfile = {
+      profile,
+      timestamp: Date.now(),
+    };
+    await AsyncStorage.setItem(PROFILE_CACHE_KEY(userId), JSON.stringify(cachedEntry));
+    debugSuccess('cache', 'Profile cached successfully');
+  } catch (error) {
+    debugError('cache', 'Error caching profile:', error);
+  }
+};
+
+/**
+ * Clear cached user profile (call on logout)
+ */
+export const clearCachedProfile = async (userId: string): Promise<void> => {
+  try {
+    await AsyncStorage.removeItem(PROFILE_CACHE_KEY(userId));
+    debug('cache', 'Profile cache cleared');
+  } catch (error) {
+    debugError('cache', 'Error clearing profile cache:', error);
+  }
+};
+
+/**
+ * Get user profile from Firestore (with cache fallback)
+ */
+export const getUserProfile = async (userId: string, useCache: boolean = true): Promise<UserProfile | null> => {
+  try {
+    // Try cache first if requested
+    if (useCache) {
+      const cached = await getCachedProfile(userId);
+      if (cached) {
+        // Fetch fresh data in background (don't await)
+        getUserProfile(userId, false).then((fresh) => {
+          if (fresh) {
+            cacheProfile(userId, fresh);
+          }
+        }).catch(() => {
+          // Ignore background fetch errors
+        });
+        return cached;
+      }
+    }
+
+    // Fetch from Firestore
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);
     
     if (userSnap.exists()) {
-      return userSnap.data() as UserProfile;
+      const profile = userSnap.data() as UserProfile;
+      // Cache it for next time
+      await cacheProfile(userId, profile);
+      return profile;
     }
     return null;
   } catch (error) {
     debugError('firebase', 'Error getting user profile:', error);
+    // If network error, try cache as fallback
+    if (useCache) {
+      const cached = await getCachedProfile(userId);
+      if (cached) {
+        debug('cache', 'Using cached profile as fallback');
+        return cached;
+      }
+    }
     throw error;
   }
 };
@@ -90,7 +191,8 @@ export const getUserProfile = async (userId: string): Promise<UserProfile | null
  */
 export const hasCompletedOnboarding = async (userId: string): Promise<boolean> => {
   try {
-    const profile = await getUserProfile(userId);
+    // Use cache first for faster check
+    const profile = await getUserProfile(userId, true);
     return profile?.onboardingCompleted === true;
   } catch (error) {
     debugError('firebase', 'Error checking onboarding status:', error);

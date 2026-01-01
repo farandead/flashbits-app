@@ -1,0 +1,25 @@
+appId: com.flashbits.app
+---
+# Test: Guest user can navigate to feed (key flow)
+- launchApp
+- waitForAnimationToEnd
+# Tap on Continue as Guest button using accessibility identifier (critical action)
+- tapOn:
+    id: "login-button-guest"
+# Wait for navigation
+- waitForAnimationToEnd
+# Wait for loading screen if present
+- runFlow:
+    when:
+      visible: ".*Loading.*"
+    commands:
+      - waitForAnimationToEnd
+      - waitForAnimationToEnd
+# Wait for home screen to fully load
+- waitForAnimationToEnd
+# Verify navigation succeeded using content (not layout)
+- assertVisible:
+    text: ".*flashbits.*"
+- assertVisible:
+    text: ".*No Brainrot.*"
+

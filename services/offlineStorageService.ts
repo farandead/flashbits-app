@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { debug, debugSuccess, debugError, debugWarn } from '@/utils/debug';
 import { Question } from '@/data/questions';
+import { hasActiveEntitlement } from './revenueCatService';
 
 const OFFLINE_STORAGE_PREFIX = '@flashbits_offline:';
 const OFFLINE_QUESTIONS_KEY = `${OFFLINE_STORAGE_PREFIX}questions`;
@@ -20,9 +21,17 @@ interface OfflineMetadata {
 /**
  * Save questions for offline use
  * Automatically limits to MAX_OFFLINE_QUESTIONS to prevent storage bloat
+ * Only available for Pro subscribers.
  */
 export const saveQuestionsForOffline = async (questions: Question[]): Promise<void> => {
   try {
+    // Check if user has pro subscription
+    const isPro = await hasActiveEntitlement();
+    if (!isPro) {
+      debugWarn('offline', 'Saving offline questions is only available for Pro subscribers');
+      return;
+    }
+
     if (questions.length === 0) {
       debugWarn('offline', 'No questions to save for offline');
       return;
@@ -59,9 +68,17 @@ export const saveQuestionsForOffline = async (questions: Question[]): Promise<vo
  * Returns empty array if storage is expired or invalid
  * Note: This function clears expired questions but doesn't trigger redownload.
  * Redownload is handled by the questions service when it detects expiration.
+ * Only available for Pro subscribers.
  */
 export const loadOfflineQuestions = async (): Promise<Question[]> => {
   try {
+    // Check if user has pro subscription
+    const isPro = await hasActiveEntitlement();
+    if (!isPro) {
+      debug('offline', 'Offline questions are only available for Pro subscribers');
+      return [];
+    }
+
     const data = await AsyncStorage.getItem(OFFLINE_QUESTIONS_KEY);
     if (!data) {
       debug('offline', 'No offline questions found');
@@ -157,9 +174,17 @@ export const clearOfflineQuestions = async (): Promise<void> => {
 /**
  * Add questions to existing offline storage (merge)
  * Respects MAX_OFFLINE_QUESTIONS limit
+ * Only available for Pro subscribers.
  */
 export const addQuestionsToOffline = async (newQuestions: Question[]): Promise<void> => {
   try {
+    // Check if user has pro subscription
+    const isPro = await hasActiveEntitlement();
+    if (!isPro) {
+      debugWarn('offline', 'Adding offline questions is only available for Pro subscribers');
+      return;
+    }
+
     const existingQuestions = await loadOfflineQuestions();
     
     // Create a map of existing question IDs to avoid duplicates
@@ -194,6 +219,7 @@ export const addQuestionsToOffline = async (newQuestions: Question[]): Promise<v
 
 /**
  * Filter offline questions by criteria
+ * Only available for Pro subscribers.
  */
 export const filterOfflineQuestions = async (
   topics?: string[],
@@ -201,6 +227,7 @@ export const filterOfflineQuestions = async (
   category?: string
 ): Promise<Question[]> => {
   try {
+    // loadOfflineQuestions already checks for pro, so we can just call it
     const questions = await loadOfflineQuestions();
     
     let filtered = questions;

@@ -18,7 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Import the pre-configured auth instance with persistence
 import { auth } from '@/config/firebase';
 import { debug, debugSuccess, debugError } from '@/utils/debug';
-import { deleteUserData } from '@/services/userService';
+import { deleteUserData, clearCachedProfile } from '@/services/userService';
 import { logOutRevenueCat } from '@/services/revenueCatService';
 import {
   checkRateLimit,
@@ -97,6 +97,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           debugError('auth', 'Error validating user token:', error);
           // Token might be expired, but Firebase will handle it
         }
+        
+        // Initialize notifications for user (handles app reinstall scenario)
+        // If user previously enabled notifications, automatically request permissions
+        try {
+          const { notificationService } = await import('@/services/notificationService');
+          await notificationService.initializeNotificationsForUser(user.uid);
+        } catch (error) {
+          // Non-critical - don't block auth flow if notification init fails
+          debugError('auth', 'Error initializing notifications:', error);
+        }
       } else {
         debug('auth', 'No user (logged out or not persisted)');
       }
@@ -110,6 +120,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Sign out
   const signOut = async () => {
     try {
+      // Clear cached profile before signing out
+      const currentUser = auth.currentUser;
+      if (currentUser) {
+        await clearCachedProfile(currentUser.uid);
+      }
       await firebaseSignOut(auth);
     } catch (error) {
       debugError('auth', 'Sign out error:', error);

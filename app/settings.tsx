@@ -32,7 +32,6 @@ import { NOTIFICATION_MESSAGES } from '@/constants/notifications';
 import { SUPPORT_CONFIG } from '@/constants/support';
 import { useRevenueCat } from '@/context/RevenueCatContext';
 import { useNetwork } from '@/context/NetworkContext';
-import { syncAllData } from '@/services/syncService';
 import { debug, debugError, debugWarn } from '@/utils/debug';
 import * as Linking from 'expo-linking';
 import { clearAllCache, getCacheStats } from '@/services/cacheService';
@@ -148,7 +147,6 @@ export default function SettingsScreen() {
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [showSubscriptionManager, setShowSubscriptionManager] = useState(false);
   const [showVerificationBanner, setShowVerificationBanner] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [isSavingOffline, setIsSavingOffline] = useState(false);
   const [offlineModeEnabled, setOfflineModeEnabled] = useState(false);
   const [offlineInfo, setOfflineInfo] = useState<{
@@ -205,14 +203,65 @@ export default function SettingsScreen() {
     }
   };
 
-  // Load notification settings
+  // Load notification settings and sync with iOS permission status
+  // Toggle state is driven by iOS permission status (read-only from iOS Settings)
   useEffect(() => {
     const loadNotificationSettings = async () => {
-      const settings = await notificationService.getSettings();
-      setNotificationSettings(settings);
+      // Check iOS permission status (this is the source of truth for toggle state)
+      const permissionStatus = await notificationService.getPermissionStatus();
+      
+      // Load settings from Firestore/AsyncStorage
+      const settings = await notificationService.getSettings(user?.uid);
+      
+      // Toggle state is always synced with iOS permission status
+      const syncedSettings = {
+        ...settings,
+        enabled: permissionStatus.granted, // Toggle reflects iOS permission status
+      };
+      setNotificationSettings(syncedSettings);
+      
+      // If permissions are granted, ensure notification types are enabled
+      if (permissionStatus.granted && !settings.enabled) {
+        await notificationService.saveSettings({
+          ...syncedSettings,
+          dailyReminder: true,
+          practiceStreakReminder: true,
+          motivationalNotifications: true,
+        }, user?.uid);
+      }
     };
     loadNotificationSettings();
-  }, []);
+  }, [user?.uid]);
+
+  // Listen for permission changes when app comes to foreground
+  // User might have changed permissions in iOS Settings
+  useEffect(() => {
+    const checkPermissions = async () => {
+      const permissionStatus = await notificationService.getPermissionStatus();
+      
+      // Update toggle state to match current iOS permission status
+      setNotificationSettings(prev => ({
+        ...prev,
+        enabled: permissionStatus.granted,
+      }));
+      
+      // If permissions were revoked in iOS Settings, disable notifications
+      if (!permissionStatus.granted) {
+        await notificationService.disableNotifications(user?.uid);
+      }
+    };
+    
+    // Check permissions when app comes to foreground
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      if (nextAppState === 'active') {
+        checkPermissions();
+      }
+    });
+    
+    return () => {
+      subscription.remove();
+    };
+  }, [user?.uid]);
 
   // Load offline storage info - refresh when screen comes into focus
   const loadOfflineInfo = useCallback(async () => {
@@ -250,37 +299,96 @@ export default function SettingsScreen() {
   }, [loadOfflineInfo]);
 
   // Handle notification toggle
+  // Toggle state is driven by iOS permission status
+  // - If user tries to turn ON: Request iOS permissions
+  // - If user tries to turn OFF: Direct them to iOS Settings (can't revoke programmatically)
   const handleNotificationToggle = async (value: boolean) => {
-    if (value) {
-      // Request permissions first
-      const hasPermission = await notificationService.requestPermissions();
-      if (!hasPermission) {
-        Alert.alert(
-          'Permission Required',
-          'Please enable notifications in your device settings to receive practice reminders.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-    }
-    
-    const newSettings = { 
-      ...notificationSettings, 
-      enabled: value,
-      // Enable all notification types when master toggle is on
-      dailyReminder: value,
-      practiceStreakReminder: value,
-      motivationalNotifications: value,
-    };
-    setNotificationSettings(newSettings);
-    await notificationService.saveSettings(newSettings);
-    
     if (hapticFeedback) {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    
+    if (value) {
+      // User wants to enable - request iOS permissions
+      const hasPermission = await notificationService.requestPermissions();
+      
+      if (!hasPermission) {
+        // Permission denied - keep toggle OFF (reflects iOS permission status)
+        setNotificationSettings(prev => ({
+          ...prev,
+          enabled: false,
+        }));
+        
+        Alert.alert(
+          'Permission Required',
+          Platform.OS === 'ios'
+            ? 'Please enable notifications in Settings > flashbits > Notifications to receive practice reminders.'
+            : 'Please enable notifications in your device settings to receive practice reminders.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            Platform.OS === 'ios'
+              ? {
+                  text: 'Open Settings',
+                  onPress: async () => {
+                    try {
+                      await Linking.openURL('app-settings:');
+                    } catch (error) {
+                      debugError('settings', 'Error opening settings:', error);
+                      Alert.alert(
+                        'Open Settings',
+                        'Please go to Settings > flashbits > Notifications to enable notifications.',
+                        [{ text: 'OK' }]
+                      );
+                    }
+                  },
+                  style: 'default',
+                }
+              : { text: 'OK' },
+          ]
+        );
+        return;
+      }
+      
+      // Permissions granted - enable notifications
+      const newSettings = { 
+        ...notificationSettings, 
+        enabled: true,
+        dailyReminder: true,
+        practiceStreakReminder: true,
+        motivationalNotifications: true,
+      };
+      setNotificationSettings(newSettings);
+      await notificationService.saveSettings(newSettings, user?.uid);
+      
+    } else {
+      // User wants to turn OFF - can't revoke iOS permissions programmatically
+      // Show alert directing them to iOS Settings
+      Alert.alert(
+        'Disable Notifications',
+        'To disable notifications, please go to Settings > flashbits > Notifications and turn off Allow Notifications.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => {
+            // Keep toggle ON (reflects iOS permission status)
+            setNotificationSettings(prev => ({
+              ...prev,
+              enabled: true,
+            }));
+          }},
+          {
+            text: 'Open Settings',
+            onPress: async () => {
+              try {
+                await Linking.openURL('app-settings:');
+              } catch (error) {
+                debugError('settings', 'Error opening settings:', error);
+              }
+            },
+            style: 'default',
+          },
+        ]
+      );
+    }
   };
+
 
 
   // Handle contact support - redirect to web contact page
@@ -499,65 +607,35 @@ export default function SettingsScreen() {
     }
   };
 
-  // Handle sync data
-  const handleSyncData = async () => {
-    // Check if online
-    if (!isConnected || isInternetReachable === false) {
-      Alert.alert(
-        'No Internet Connection',
-        'Please connect to the internet to sync your data.',
-        [{ text: 'OK' }]
-      );
+
+  const handleOfflineModeToggle = async (value: boolean) => {
+    // Check if user is pro
+    if (!isPro) {
+      if (hapticFeedback) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      }
+      
+      // Check if user is authenticated
+      if (!isAuthenticated) {
+        Alert.alert(
+          'Sign In Required',
+          'Please sign in to use offline mode and unlock Pro features.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Sign In', 
+              onPress: () => router.push('/'),
+              style: 'default'
+            }
+          ]
+        );
+        return;
+      }
+      
+      setShowPaywall(true);
       return;
     }
 
-    try {
-      setIsSyncing(true);
-      if (hapticFeedback) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      }
-      
-      const result = await syncAllData();
-      
-      if (result.success) {
-        if (hapticFeedback) {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-        
-        const syncedItems = [];
-        if (result.synced.stats) syncedItems.push('Stats');
-        if (result.synced.questions) syncedItems.push('Questions');
-        if (result.synced.subscription) syncedItems.push('Subscription');
-        
-        Alert.alert(
-          'Sync Complete',
-          `Successfully synced: ${syncedItems.join(', ')}`,
-          [{ text: 'OK' }]
-        );
-      } else {
-        if (hapticFeedback) {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        }
-        Alert.alert(
-          'Sync Failed',
-          result.errors.length > 0 
-            ? result.errors.join('\n')
-            : 'Failed to sync data. Please try again.',
-          [{ text: 'OK' }]
-        );
-      }
-    } catch (error: any) {
-      debugError('sync', 'Sync error:', error);
-      if (hapticFeedback) {
-        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      }
-      Alert.alert('Error', error.message || 'Failed to sync data. Please try again.');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const handleOfflineModeToggle = async (value: boolean) => {
     if (value) {
       // Turning on offline mode - check if expired and download questions
       if (!isConnected || isInternetReachable === false) {
@@ -1186,18 +1264,18 @@ export default function SettingsScreen() {
                 <View style={styles.proContent}>
                   <View style={styles.proHeader}>
                     <Text style={styles.proTitle}>Unlock Pro</Text>
-                    <View style={styles.earlyBirdBadge}>
-                      <Ionicons name="star" size={10} color="#FFD700" />
-                      <Text style={styles.earlyBirdText}>Early Bird</Text>
+                    <View style={styles.trialBadgeSettings}>
+                      <Ionicons name="gift" size={12} color={colors.primary} />
+                      <Text style={styles.trialTextSettings}>7-Day Free Trial</Text>
                     </View>
                   </View>
                   <Text style={styles.proDescription}>
-                    Unlimited questions & analytics
+                    Try Pro free for 7 days, then £9.99/month
                   </Text>
                   <View style={styles.proFeatures}>
                     <View style={styles.proFeatureItem}>
                       <Ionicons name="checkmark" size={12} color={colors.primary} />
-                      <Text style={styles.proFeatureText}>£9.99/mo</Text>
+                      <Text style={styles.proFeatureText}>Unlimited questions & analytics</Text>
                     </View>
                     <View style={styles.proFeatureItem}>
                       <Ionicons name="checkmark" size={12} color={colors.primary} />
@@ -1755,42 +1833,62 @@ export default function SettingsScreen() {
           entering={FadeInDown.duration(400).delay(425)}
           style={styles.section}
         >
-          <Text style={styles.sectionTitle}>Offline Mode</Text>
+          <View style={styles.sectionHeaderRow}>
+            <View style={styles.sectionTitleContainer}>
+              <Text style={styles.sectionTitle}>Offline Mode</Text>
+              {!isPro && (
+                <View style={styles.proBadge}>
+                  <Ionicons name="lock-closed" size={14} color={colors.primary} />
+                  <Text style={styles.proBadgeText}>PRO</Text>
+                </View>
+              )}
+            </View>
+          </View>
           <Text style={styles.sectionSubtitle}>Download questions to practice without internet</Text>
 
           <View style={styles.preferencesList}>
-            <View style={styles.preferenceItem}>
-              <View style={styles.preferenceInfo}>
-                <View style={styles.preferenceHeaderRow}>
-                  <Text style={styles.preferenceName}>Offline Mode</Text>
-                  {offlineModeEnabled && offlineInfo && offlineInfo.questionCount > 0 && !offlineInfo.isExpired && (
-                    <View style={styles.offlineBadge}>
-                      <Ionicons name="checkmark-circle" size={12} color={colors.primary} />
-                    </View>
-                  )}
+            <Pressable
+              onPress={() => !isPro && handleOfflineModeToggle(true)}
+              disabled={isSavingOffline}
+            >
+              <View style={[
+                styles.preferenceItem,
+                !isPro && styles.lockedChip,
+              ]}>
+                <View style={styles.preferenceInfo}>
+                  <View style={styles.preferenceHeaderRow}>
+                    <Text style={styles.preferenceName}>Offline Mode</Text>
+                    {isPro && offlineModeEnabled && offlineInfo && offlineInfo.questionCount > 0 && !offlineInfo.isExpired && (
+                      <View style={styles.offlineBadge}>
+                        <Ionicons name="checkmark-circle" size={12} color={colors.primary} />
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.preferenceDescription}>
+                    {!isPro
+                      ? 'Download questions for offline practice (Pro feature)'
+                      : isSavingOffline 
+                        ? 'Downloading questions...'
+                        : offlineModeEnabled && offlineInfo && offlineInfo.questionCount > 0
+                          ? !offlineInfo.isExpired
+                            ? 'Offline questions available'
+                            : 'Questions expired - toggle off and on to download again'
+                          : 'Download questions for offline practice'}
+                  </Text>
                 </View>
-                <Text style={styles.preferenceDescription}>
-                  {isSavingOffline 
-                    ? 'Downloading 2000 questions...'
-                    : offlineModeEnabled && offlineInfo && offlineInfo.questionCount > 0
-                      ? !offlineInfo.isExpired
-                        ? `${offlineInfo.questionCount} questions available`
-                        : 'Questions expired - toggle off and on to download again'
-                      : 'Download questions for offline practice'}
-                </Text>
+                {isSavingOffline ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Switch
+                    value={offlineModeEnabled}
+                    onValueChange={handleOfflineModeToggle}
+                    trackColor={{ false: colors.border, true: colors.primary + '50' }}
+                    thumbColor={offlineModeEnabled ? colors.primary : colors.textMuted}
+                    disabled={isSavingOffline || (!isConnected && !offlineModeEnabled) || !isPro}
+                  />
+                )}
               </View>
-              {isSavingOffline ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <Switch
-                  value={offlineModeEnabled}
-                  onValueChange={handleOfflineModeToggle}
-                  trackColor={{ false: colors.border, true: colors.primary + '50' }}
-                  thumbColor={offlineModeEnabled ? colors.primary : colors.textMuted}
-                  disabled={isSavingOffline || (!isConnected && !offlineModeEnabled)}
-                />
-              )}
-            </View>
+            </Pressable>
           </View>
         </Animated.View>
 
@@ -2282,31 +2380,6 @@ export default function SettingsScreen() {
           </Animated.View>
         )}
 
-        {/* Sync Data - Minimalist */}
-        {isAuthenticated && (
-          <Animated.View
-            entering={FadeInDown.duration(400).delay(750)}
-            style={styles.restorePurchasesContainer}
-          >
-            <Pressable
-              style={[
-                styles.restorePurchasesButton,
-                (!isConnected || isInternetReachable === false) && styles.restorePurchasesButtonDisabled
-              ]}
-              onPress={handleSyncData}
-              disabled={isSyncing || !isConnected || isInternetReachable === false}
-            >
-              {isSyncing ? (
-                <ActivityIndicator size="small" color={colors.textMuted} />
-              ) : (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
-                  <Ionicons name="sync-outline" size={16} color={colors.textMuted} />
-                  <Text style={styles.restorePurchasesText}>Sync Data</Text>
-                </View>
-              )}
-            </Pressable>
-          </Animated.View>
-        )}
       </ScrollView>
 
       {/* Paywall Modal - Lazy Loaded */}
@@ -2895,8 +2968,6 @@ const styles = StyleSheet.create({
   },
   offlineBadgeText: {
     fontSize: typography.fontSize.xs,
-    fontWeight: '600',
-    color: colors.primary,
   },
   testNotificationButton: {
     flexDirection: 'row',
@@ -3111,6 +3182,23 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '600',
     color: '#FFD700',
+  },
+  trialBadgeSettings: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 255, 148, 0.15)',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: borderRadius.sm,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+  },
+  trialTextSettings: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '700',
+    color: colors.primary,
+    letterSpacing: 0.3,
   },
   proDescription: {
     fontSize: typography.fontSize.xs,

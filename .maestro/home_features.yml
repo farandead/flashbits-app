@@ -1,0 +1,36 @@
+appId: com.flashbits.app
+---
+# Test: Verify all feature cards are displayed on home screen
+- launchApp
+- waitForAnimationToEnd
+# Navigate to home as guest
+- tapOn: "Continue as Guest"
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Loading.*"
+    commands:
+      - waitForAnimationToEnd
+      - waitForAnimationToEnd
+# Wait for home screen to fully load
+- waitForAnimationToEnd
+# Scroll to features section
+- scroll
+# Verify all 4 feature cards
+- assertVisible:
+    text: ".*No Brainrot.*"
+- assertVisible:
+    text: ".*Swipe to get smarter.*"
+- assertVisible:
+    text: ".*Instant Feedback.*"
+- assertVisible:
+    text: ".*Know right away.*"
+- assertVisible:
+    text: ".*Level Up.*"
+- assertVisible:
+    text: ".*Earn XP.*"
+- assertVisible:
+    text: ".*Actually Learn.*"
+- assertVisible:
+    text: ".*Missed questions.*"
+

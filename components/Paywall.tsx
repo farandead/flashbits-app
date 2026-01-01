@@ -247,18 +247,20 @@ const Paywall: React.FC<PaywallProps> = ({
               <Ionicons name="rocket" size={32} color={colors.primary} />
             </View>
             <Text style={styles.title}>Unlock Pro</Text>
-            <View style={styles.earlyBirdBadge}>
-              <Ionicons name="star" size={12} color="#FFD700" />
-              <Text style={styles.earlyBirdText}>Early Bird Special</Text>
-              <Ionicons name="star" size={12} color="#FFD700" />
+            <View style={styles.trialBadgeLarge}>
+              <Ionicons name="gift" size={18} color={colors.primary} />
+              <Text style={styles.trialTextLarge}>7-Day Free Trial</Text>
             </View>
             <Text style={styles.subtitle}>
-              Get full access to all features
+              {(() => {
+                const selectedPkg = getSelectedPackage();
+                if (selectedPkg) {
+                  const period = selectedPlan === 'monthly' ? '/month' : '/year';
+                  return `Try Pro free for 7 days, then ${formatPrice(selectedPkg)}${period}`;
+                }
+                return 'Try Pro free for 7 days, then continue with subscription';
+              })()}
             </Text>
-            <View style={styles.trialBadge}>
-              <Ionicons name="gift-outline" size={14} color={colors.primary} />
-              <Text style={styles.trialText}>7-day free trial</Text>
-            </View>
           </Animated.View>
 
           {/* Pricing Plans */}
@@ -384,8 +386,8 @@ const Paywall: React.FC<PaywallProps> = ({
               <>
                 <Text style={styles.continueButtonText}>
                   {useRevenueCatPaywall 
-                    ? 'View Plans' 
-                    : `Start ${selectedPlan === 'monthly' ? 'Monthly' : 'Yearly'} Pro`
+                    ? 'Start Free Trial' 
+                    : `Start 7-Day Free Trial`
                   }
                 </Text>
                 <Ionicons name="arrow-forward" size={16} color={colors.textInverse} />
@@ -393,7 +395,7 @@ const Paywall: React.FC<PaywallProps> = ({
             )}
           </Pressable>
           <Text style={styles.footerNote}>
-            Cancel anytime • Subscription auto-renews
+            Start your 7-day free trial • Cancel anytime • Subscription auto-renews after trial
           </Text>
         </View>
       </View>
@@ -488,6 +490,30 @@ const styles = StyleSheet.create({
     fontSize: typography.fontSize.xs,
     fontWeight: '600',
     color: colors.primary,
+  },
+  trialBadgeLarge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 255, 148, 0.15)',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    gap: spacing.sm,
+    borderWidth: 2,
+    borderColor: colors.primary,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  trialTextLarge: {
+    fontSize: typography.fontSize.sm,
+    fontWeight: '700',
+    color: colors.primary,
+    letterSpacing: 0.5,
   },
   pricingSection: {
     marginBottom: spacing.xl,

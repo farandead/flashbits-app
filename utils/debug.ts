@@ -15,13 +15,13 @@ const DEBUG_CATEGORIES = {
   settings: true,    // Settings persistence
   navigation: false,  // Screen navigation
   questions: true,   // Question loading & filtering
-  storage: false,     // AsyncStorage operations
-  api: false,         // API calls
+  storage: true,     // AsyncStorage operations
+  api: true,         // API calls
   ui: false,          // UI state changes
-  revenueCat: false,   // RevenueCat operations
+  revenueCat: true,   // RevenueCat operations
   feed: true,         // Feed operations
   cache: true,       // Cache operations (hits, misses, writes)
-  stats: false,       // User stats operations
+  stats: true,       // User stats operations
   network: true,     // Network connectivity & offline mode
   sync: true,        // Data synchronization operations
   offline: true,     // Offline storage operations

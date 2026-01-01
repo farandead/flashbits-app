@@ -17,6 +17,7 @@ import { useAuth } from '@/context/AuthContext';
 import { getUserProfile } from '@/services/userService';
 import { getUserStats } from '@/services/statsService';
 import { hasCompletedOnboarding } from '@/services/userService';
+import { syncAllData } from '@/services/syncService';
 import { debug, debugError, debugSuccess } from '@/utils/debug';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -178,6 +179,20 @@ export default function LoadingScreen() {
           easing: Easing.out(Easing.ease),
         });
         await new Promise(resolve => setTimeout(resolve, stepDuration));
+
+        // Sync data in background (don't block navigation)
+        debug('ui', 'Syncing data...');
+        syncAllData()
+          .then((result) => {
+            if (result.success) {
+              debugSuccess('sync', 'Data synced successfully on app load');
+            } else {
+              debugError('sync', 'Data sync completed with errors:', result.errors);
+            }
+          })
+          .catch((error) => {
+            debugError('sync', 'Data sync failed on app load:', error);
+          });
 
         // Check onboarding status
         debug('ui', 'Checking onboarding status...');

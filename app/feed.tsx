@@ -31,7 +31,7 @@ import { useSettings } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
 import { recordCorrectAnswer, recordWrongAnswer, recordSkippedQuestion, getUserStats, awardMilestoneXP } from '@/services/statsService';
 import { getLocalStats } from '@/services/statsQueueService';
-import { initializeSounds, playCorrectSound, playIncorrectSound, cleanupSounds, setSoundEnabled } from '@/services/soundService';
+import { initializeSounds, playCorrectSound, cleanupSounds, setSoundEnabled } from '@/services/soundService';
 import { logRankUp, logQuestionsCompleted, logStartedPracticing } from '@/services/activityService';
 import { getUserProfile } from '@/services/userService';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
@@ -511,11 +511,6 @@ export default function QuestionFeed() {
           }
         }
       } else {
-        // Play incorrect answer sound
-        if (soundEffects) {
-          playIncorrectSound();
-        }
-        
         // Record streak break
         recordStreakIncorrect();
         
@@ -972,10 +967,12 @@ export default function QuestionFeed() {
               <Ionicons name="close" size={24} color={colors.textPrimary} />
             </Pressable>
             <View style={styles.signInContainer}>
-              <Ionicons name="lock-closed-outline" size={60} color={colors.textMuted} />
-              <Text style={styles.signInTitle}>Sign in to earn XP!</Text>
+              <View style={styles.signInIconContainer}>
+                <Ionicons name="lock-closed" size={24} color={colors.primary} />
+              </View>
+              <Text style={styles.signInTitle}>Sign in to earn XP</Text>
               <Text style={styles.signInMessage}>
-                Create an account to save your progress, track your stats, and climb the hacker ranks.
+                Create an account to save your progress and track your stats.
               </Text>
               <Pressable
                 style={styles.signInButton}
@@ -985,7 +982,7 @@ export default function QuestionFeed() {
                   router.push('/');
                 }}
               >
-                <Text style={styles.signInButtonText}>Sign In / Sign Up</Text>
+                <Text style={styles.signInButtonText}>Sign In</Text>
               </Pressable>
               <Pressable
                 style={styles.continueBrowsingButton}
@@ -1493,33 +1490,42 @@ const styles = StyleSheet.create({
   },
   signInContainer: {
     alignItems: 'center',
-    paddingTop: spacing.lg,
+    paddingTop: spacing.md,
+  },
+  signInIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: `${colors.primary}15`,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
   },
   signInTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: '700',
+    fontSize: typography.fontSize.lg,
+    fontWeight: '600',
     color: colors.textPrimary,
-    marginTop: spacing.md,
     marginBottom: spacing.sm,
     textAlign: 'center',
   },
   signInMessage: {
-    fontSize: typography.fontSize.base,
+    fontSize: typography.fontSize.sm,
     fontWeight: '400',
     color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: spacing.xl,
-    lineHeight: 22,
+    lineHeight: typography.fontSize.sm * 1.5,
+    paddingHorizontal: spacing.lg,
+    maxWidth: 280,
   },
   signInButton: {
     backgroundColor: colors.primary,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: spacing.xl,
     borderRadius: borderRadius.md,
     width: '100%',
     alignItems: 'center',
-    marginTop: spacing.lg,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   signInButtonText: {
     fontSize: typography.fontSize.sm,
@@ -1531,7 +1537,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   continueBrowsingText: {
-    fontSize: typography.fontSize.base,
+    fontSize: typography.fontSize.xs,
     fontWeight: '400',
     color: colors.textMuted,
     textAlign: 'center',

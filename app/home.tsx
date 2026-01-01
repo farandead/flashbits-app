@@ -69,15 +69,26 @@ export default function LandingPage() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [emailVerified, setEmailVerified] = useState(true); // Default to true to avoid flashing banner
   const [showVerificationBanner, setShowVerificationBanner] = useState(false);
-  // Load user profile when screen appears
+  
+  // Load user profile when screen appears - use cache first for instant display
   useEffect(() => {
     const fetchProfile = async () => {
       if (user?.uid) {
         try {
-          const profile = await getUserProfile(user.uid);
-          setUserProfile(profile);
+          // Load from cache first (instant display)
+          const cachedProfile = await getUserProfile(user.uid, true);
+          if (cachedProfile) {
+            setUserProfile(cachedProfile);
+          }
+          
+          // Then fetch fresh data in background (will update cache and state)
+          const freshProfile = await getUserProfile(user.uid, false);
+          if (freshProfile) {
+            setUserProfile(freshProfile);
+          }
         } catch (error) {
           debugError('firebase', 'Error fetching profile:', error);
+          // If fresh fetch fails, cached profile is already set
         }
       }
     };
