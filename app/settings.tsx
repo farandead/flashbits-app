@@ -22,6 +22,11 @@ import { seedQuestionsToFirebase, fetchAllQuestions } from '@/services/questions
 import { getUserProfile } from '@/services/userService';
 import { useSettings, QuestionStatusFilter } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
+import {
+  getCenteredContainerStyle,
+  getResponsiveHorizontalPadding,
+  MAX_CONTENT_WIDTH_LARGE,
+} from '@/utils/responsive';
 import { Topic, Difficulty, Company, QuestionCategory } from '@/data/questions';
 import { useTopics } from '@/hooks/useTopics';
 import EmailVerificationBanner from '@/components/EmailVerificationBanner';
@@ -181,6 +186,14 @@ export default function SettingsScreen() {
     setIsPro(revenueCatIsPro);
     setIsLoadingProfile(revenueCatLoading);
   }, [revenueCatIsPro, revenueCatLoading]);
+
+  // Reset premium category if user loses pro status
+  useEffect(() => {
+    if (!isPro && selectedCategory !== 'all' && selectedCategory !== 'general') {
+      // User lost pro status or doesn't have pro, reset to 'all'
+      setSelectedCategory('all');
+    }
+  }, [isPro, selectedCategory]);
 
   // Check email verification status
   useEffect(() => {
@@ -524,23 +537,7 @@ export default function SettingsScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    // Check if user is authenticated
-    if (!isAuthenticated) {
-      Alert.alert(
-        'Sign In Required',
-        'Please sign in to upgrade to Pro and unlock premium features.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Sign In', 
-            onPress: () => router.push('/'),
-            style: 'default'
-          }
-        ]
-      );
-      return;
-    }
-
+    // Allow purchases without authentication (App Store Guideline 5.1.1)
     setShowPaywall(true);
   };
 
@@ -615,23 +612,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to use offline mode and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -811,23 +792,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to customize topics and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -838,6 +803,27 @@ export default function SettingsScreen() {
     contextToggleTopic(topicId);
   };
 
+  const handleCategorySelect = async (categoryId: QuestionCategory | 'all') => {
+    // 'all' and 'general' are free, others require pro
+    const isFreeCategory = categoryId === 'all' || categoryId === 'general';
+    
+    // Check if user is pro for premium categories
+    if (!isFreeCategory && !isPro) {
+      if (hapticFeedback) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      }
+      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
+      setShowPaywall(true);
+      return;
+    }
+    
+    if (hapticFeedback) {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setSelectedCategory(categoryId);
+  };
+
   const toggleDifficulty = async (difficultyId: Difficulty) => {
     // Check if user is pro
     if (!isPro) {
@@ -845,23 +831,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to customize difficulty and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -879,23 +849,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to filter by company and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -913,23 +867,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to customize topics and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -947,23 +885,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to customize topics and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -984,23 +906,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to customize difficulty and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -1018,23 +924,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to customize difficulty and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -1055,23 +945,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to filter by company and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -1089,23 +963,7 @@ export default function SettingsScreen() {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       }
       
-      // Check if user is authenticated
-      if (!isAuthenticated) {
-        Alert.alert(
-          'Sign In Required',
-          'Please sign in to filter by company and unlock Pro features.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { 
-              text: 'Sign In', 
-              onPress: () => router.push('/'),
-              style: 'default'
-            }
-          ]
-        );
-        return;
-      }
-      
+      // Allow purchases without authentication (App Store Guideline 5.1.1)
       setShowPaywall(true);
       return;
     }
@@ -1126,6 +984,12 @@ export default function SettingsScreen() {
     router.replace('/feed');
   };
 
+  const scrollContentStyle = {
+    ...styles.scrollContent,
+    padding: getResponsiveHorizontalPadding(spacing.lg),
+    paddingBottom: 120,
+  };
+
   return (
     <View style={styles.container}>
       {/* Header */}
@@ -1140,7 +1004,10 @@ export default function SettingsScreen() {
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          scrollContentStyle,
+          getCenteredContainerStyle(MAX_CONTENT_WIDTH_LARGE),
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Account Section */}
@@ -1607,7 +1474,11 @@ export default function SettingsScreen() {
           <View style={styles.categoryContainer}>
             {CATEGORIES.map((cat) => {
               const isSelected = selectedCategory === cat.id;
-              const isDisabled = cat.comingSoon;
+              const isComingSoon = cat.comingSoon;
+              const isFreeCategory = cat.id === 'all' || cat.id === 'general';
+              const isLocked = !isFreeCategory && !isPro && !isComingSoon;
+              const isDisabled = isComingSoon || isLocked;
+              
               return (
                 <Pressable
                   key={cat.id}
@@ -1616,7 +1487,7 @@ export default function SettingsScreen() {
                     isSelected && styles.categoryCardSelected,
                     isDisabled && styles.categoryCardDisabled,
                   ]}
-                  onPress={() => !isDisabled && setSelectedCategory(cat.id)}
+                  onPress={() => !isDisabled && handleCategorySelect(cat.id)}
                   disabled={isDisabled}
                 >
                   <View style={styles.categoryHeader}>
@@ -1639,6 +1510,12 @@ export default function SettingsScreen() {
                         ]}>
                           {cat.name}
                         </Text>
+                        {isLocked && (
+                          <View style={styles.proBadge}>
+                            <Ionicons name="lock-closed" size={10} color={colors.primary} />
+                            <Text style={styles.proBadgeText}>Pro</Text>
+                          </View>
+                        )}
                         {cat.comingSoon && (
                           <View style={styles.comingSoonBadge}>
                             <Text style={styles.comingSoonText}>Soon</Text>
@@ -1659,6 +1536,9 @@ export default function SettingsScreen() {
                     ]}>
                       {isSelected && (
                         <View style={styles.categoryRadioDot} />
+                      )}
+                      {isLocked && !isSelected && (
+                        <Ionicons name="lock-closed" size={12} color={colors.textMuted} />
                       )}
                     </View>
                   </View>
@@ -2309,11 +2189,12 @@ export default function SettingsScreen() {
                 if (hapticFeedback) {
                   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 }
-                Linking.openURL('https://flashbits.co/terms');
+                // Apple's standard EULA - required for apps using Apple's standard Terms of Use
+                Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/');
               }}
             >
               <Ionicons name="document-text-outline" size={18} color={colors.textSecondary} />
-              <Text style={styles.legalLinkText}>Terms and Conditions</Text>
+              <Text style={styles.legalLinkText}>Terms of Use (EULA)</Text>
               <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
             </Pressable>
           </View>

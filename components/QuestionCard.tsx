@@ -29,6 +29,12 @@ import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { submitQuestionReport, ReportType } from '@/services/reportService';
 import { useAuth } from '@/context/AuthContext';
 import { sanitizeString } from '@/utils/sanitize';
+import {
+  getScreenDimensions,
+  isTablet,
+  getCenteredContainerStyle,
+  MAX_CONTENT_WIDTH_LANDSCAPE,
+} from '@/utils/responsive';
 
 // Category display configuration
 const CATEGORY_CONFIG: Record<QuestionCategory, { label: string; color: string }> = {
@@ -55,6 +61,12 @@ const getLeetCodeUrl = (problemName?: string, problemNumber?: number): string | 
     return `https://leetcode.com/problems/${slug}/`;
   }
   return null;
+};
+
+// Get screen dimensions dynamically (for orientation changes)
+const getCardDimensions = () => {
+  const { width, height } = getScreenDimensions();
+  return { SCREEN_WIDTH: width, SCREEN_HEIGHT: height };
 };
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -92,7 +104,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [descriptionError, setDescriptionError] = useState<string | null>(null);
   const explanationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
+
   // Animation values for wrong answer
   const shakeX = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -107,7 +119,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
       clearTimeout(explanationTimeoutRef.current);
       explanationTimeoutRef.current = null;
     }
-    
+
     setSelectedAnswer(null);
     setHasAnswered(false);
     setShowExplanation(false);
@@ -149,7 +161,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       }
-      
+
       // Trigger shake animation for wrong answer
       shakeX.value = withSequence(
         withTiming(-10, { duration: 50 }),
@@ -160,13 +172,13 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
         withTiming(5, { duration: 50 }),
         withTiming(0, { duration: 50 })
       );
-      
+
       // Pulse animation
       scale.value = withSequence(
         withSpring(1.05, { damping: 8, stiffness: 200 }),
         withSpring(1, { damping: 8, stiffness: 200 })
       );
-      
+
       // Fade in wrong answer indicator
       wrongAnswerOpacity.value = withTiming(1, { duration: 200 });
     }
@@ -176,7 +188,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
     if (explanationTimeoutRef.current) {
       clearTimeout(explanationTimeoutRef.current);
     }
-    
+
     explanationTimeoutRef.current = setTimeout(() => {
       setShowExplanation(true);
       explanationTimeoutRef.current = null;
@@ -250,7 +262,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
     // Sanitize input in real-time
     const sanitized = sanitizeString(text, MAX_DESCRIPTION_LENGTH);
     setReportDescription(sanitized);
-    
+
     // Clear error if input is now valid
     if (descriptionError && sanitized.length <= MAX_DESCRIPTION_LENGTH) {
       setDescriptionError(null);
@@ -272,7 +284,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
 
     // Sanitize description before submission
     const sanitizedDescription = sanitizeString(trimmedDescription, MAX_DESCRIPTION_LENGTH);
-    
+
     setIsSubmitting(true);
     setDescriptionError(null);
 
@@ -314,234 +326,238 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({
 
   return (
     <View style={styles.container}>
-      {/* Answered Before Badge - shown if previously answered (takes priority over skipped/wrong) */}
-      {wasAnswered && (
-        <Animated.View 
-          entering={FadeIn.duration(300)}
-          style={[
-            styles.revisitBadge,
-            wasAnsweredCorrectly ? styles.solvedCorrectlyBadge : styles.solvedBadge,
-          ]}
-        >
-          <Ionicons 
-            name={wasAnsweredCorrectly ? "checkmark-circle" : "refresh"} 
-            size={16} 
-            color={wasAnsweredCorrectly ? "#00FF94" : "#FFB800"} 
-          />
-          <Text style={[
-            styles.revisitText,
-            wasAnsweredCorrectly ? styles.solvedCorrectlyText : styles.solvedText
-          ]}>
-            {wasAnsweredCorrectly ? "Previously Solved ✓" : "Attempted Before"}
-          </Text>
-        </Animated.View>
-      )}
-      
-      {/* Revisit Badge - only shown if NOT answered yet (still skipped or wrong with no attempt) */}
-      {!wasAnswered && (wasSkipped || wasWrong) && (
-        <Animated.View 
-          entering={FadeIn.duration(300)}
-          style={[
-            styles.revisitBadge,
-            wasWrong ? styles.revisitBadgeWrong : styles.revisitBadgeSkipped,
-          ]}
-        >
-          <Ionicons 
-            name={wasWrong ? 'refresh' : 'play-skip-forward'} 
-            size={14} 
-            color={wasWrong ? colors.incorrect : colors.warning} 
-          />
-          <Text style={[
-            styles.revisitText,
-            wasWrong ? styles.revisitTextWrong : styles.revisitTextSkipped,
-          ]}>
-            {wasWrong ? 'Previously Wrong' : 'Previously Skipped'}
-          </Text>
-        </Animated.View>
-      )}
+      {/* Centered Content Wrapper for iPad */}
+      <View style={[styles.contentWrapper, isTablet() && styles.contentWrapperTablet]}>
+        {/* Answered Before Badge - shown if previously answered (takes priority over skipped/wrong) */}
+        {wasAnswered && (
+          <Animated.View
+            entering={FadeIn.duration(300)}
+            style={[
+              styles.revisitBadge,
+              wasAnsweredCorrectly ? styles.solvedCorrectlyBadge : styles.solvedBadge,
+            ]}
+          >
+            <Ionicons
+              name={wasAnsweredCorrectly ? "checkmark-circle" : "refresh"}
+              size={16}
+              color={wasAnsweredCorrectly ? "#00FF94" : "#FFB800"}
+            />
+            <Text style={[
+              styles.revisitText,
+              wasAnsweredCorrectly ? styles.solvedCorrectlyText : styles.solvedText
+            ]}>
+              {wasAnsweredCorrectly ? "Previously Solved ✓" : "Attempted Before"}
+            </Text>
+          </Animated.View>
+        )}
 
-      {/* Topic & Category Badges */}
-      <View style={styles.header}>
-        <View style={styles.badgesRow}>
-          <View
+        {/* Revisit Badge - only shown if NOT answered yet (still skipped or wrong with no attempt) */}
+        {!wasAnswered && (wasSkipped || wasWrong) && (
+          <Animated.View
+            entering={FadeIn.duration(300)}
             style={[
-              styles.topicBadge,
-              { backgroundColor: topicColors[question.topic] + '20' },
+              styles.revisitBadge,
+              wasWrong ? styles.revisitBadgeWrong : styles.revisitBadgeSkipped,
             ]}
           >
-            <Text
-              style={[styles.topicText, { color: topicColors[question.topic] }]}
-            >
-              {question.topic}
+            <Ionicons
+              name={wasWrong ? 'refresh' : 'play-skip-forward'}
+              size={14}
+              color={wasWrong ? colors.incorrect : colors.warning}
+            />
+            <Text style={[
+              styles.revisitText,
+              wasWrong ? styles.revisitTextWrong : styles.revisitTextSkipped,
+            ]}>
+              {wasWrong ? 'Previously Wrong' : 'Previously Skipped'}
             </Text>
-          </View>
-          <View
-            style={[
-              styles.difficultyBadge,
-              { backgroundColor: difficultyColors[question.difficulty] + '20' },
-            ]}
-          >
-            <Text
-              style={[
-                styles.difficultyText,
-                { color: difficultyColors[question.difficulty] },
-              ]}
-            >
-              {question.difficulty.toUpperCase()}
-            </Text>
-          </View>
-          {/* Category Badge (for blind75, neetcode150, etc.) */}
-          {question.category && question.category !== 'general' && (
+          </Animated.View>
+        )}
+
+        {/* Topic & Category Badges */}
+        <View style={styles.header}>
+          <View style={styles.badgesRow}>
             <View
               style={[
-                styles.categoryBadge,
-                { backgroundColor: CATEGORY_CONFIG[question.category].color + '20' },
+                styles.topicBadge,
+                { backgroundColor: topicColors[question.topic] + '20' },
+              ]}
+            >
+              <Text
+                style={[styles.topicText, { color: topicColors[question.topic] }]}
+              >
+                {question.topic}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.difficultyBadge,
+                { backgroundColor: difficultyColors[question.difficulty] + '20' },
               ]}
             >
               <Text
                 style={[
-                  styles.categoryText,
-                  { color: CATEGORY_CONFIG[question.category].color },
+                  styles.difficultyText,
+                  { color: difficultyColors[question.difficulty] },
                 ]}
               >
-                {CATEGORY_CONFIG[question.category].label}
+                {question.difficulty.toUpperCase()}
               </Text>
             </View>
-          )}
-        </View>
-        
-        {/* Problem Name & LeetCode Link & Report Button */}
-        <View style={styles.problemRow}>
-          {question.problemName ? (
-            <View style={styles.problemInfo}>
-              {question.problemNumber && (
-                <Text style={styles.problemNumber}>#{question.problemNumber}</Text>
-              )}
-              <Text style={styles.problemName} numberOfLines={1}>
-                {question.problemName}
-              </Text>
-            </View>
-          ) : (
-            <View style={styles.problemInfo} />
-          )}
-          <View style={styles.headerActions}>
-            {getLeetCodeUrl(question.problemName, question.problemNumber) && (
-              <Pressable
-                style={styles.leetcodeButton}
-                onPress={async () => {
-                  await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  const url = getLeetCodeUrl(question.problemName, question.problemNumber);
-                  if (url) {
-                    Linking.openURL(url);
-                  }
-                }}
+            {/* Category Badge (for blind75, neetcode150, etc.) */}
+            {question.category && question.category !== 'general' && (
+              <View
+                style={[
+                  styles.categoryBadge,
+                  { backgroundColor: CATEGORY_CONFIG[question.category].color + '20' },
+                ]}
               >
-                <Ionicons name="open-outline" size={14} color={colors.primary} />
-                <Text style={styles.leetcodeButtonText}>LeetCode</Text>
-              </Pressable>
+                <Text
+                  style={[
+                    styles.categoryText,
+                    { color: CATEGORY_CONFIG[question.category].color },
+                  ]}
+                >
+                  {CATEGORY_CONFIG[question.category].label}
+                </Text>
+              </View>
             )}
-            <Pressable
-              style={styles.reportButton}
-              onPress={handleReportPress}
-            >
-              <Ionicons name="alert-circle-outline" size={14} color={colors.textMuted} />
-              <Text style={styles.reportButtonText}>Report</Text>
-            </Pressable>
+          </View>
+
+          {/* Problem Name & LeetCode Link & Report Button */}
+          <View style={styles.problemRow}>
+            {question.problemName ? (
+              <View style={styles.problemInfo}>
+                {question.problemNumber && (
+                  <Text style={styles.problemNumber}>#{question.problemNumber}</Text>
+                )}
+                <Text style={styles.problemName} numberOfLines={1}>
+                  {question.problemName}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.problemInfo} />
+            )}
+            <View style={styles.headerActions}>
+              {getLeetCodeUrl(question.problemName, question.problemNumber) && (
+                <Pressable
+                  style={styles.leetcodeButton}
+                  onPress={async () => {
+                    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    const url = getLeetCodeUrl(question.problemName, question.problemNumber);
+                    if (url) {
+                      Linking.openURL(url);
+                    }
+                  }}
+                >
+                  <Ionicons name="open-outline" size={14} color={colors.primary} />
+                  <Text style={styles.leetcodeButtonText}>LeetCode</Text>
+                </Pressable>
+              )}
+              <Pressable
+                style={styles.reportButton}
+                onPress={handleReportPress}
+              >
+                <Ionicons name="alert-circle-outline" size={14} color={colors.textMuted} />
+                <Text style={styles.reportButtonText}>Report</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
-      </View>
 
-      {/* Question */}
-      <View style={styles.questionContainer}>
-        <Text style={styles.questionText}>{question.question}</Text>
+        {/* Question */}
+        <View style={styles.questionContainer}>
+          <Text style={styles.questionText}>{question.question}</Text>
 
-        {question.code && (
-          <View style={styles.codeBlock}>
-            <Text style={styles.codeText}>{question.code}</Text>
-          </View>
+          {question.code && (
+            <View style={styles.codeBlock}>
+              <Text style={styles.codeText}>{question.code}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Options */}
+        <View style={styles.optionsContainer}>
+          {question.options?.map((option, index) => {
+            const isWrongAnswer = hasAnswered && isSelectedAnswer(index) && !isCorrectAnswer(index);
+
+            return (
+              <Animated.View
+                key={index}
+                style={isWrongAnswer ? shakeAnimatedStyle : undefined}
+              >
+                <TouchableOpacity
+                  style={getOptionStyle(index)}
+                  onPress={() => handleOptionPress(index)}
+                  disabled={hasAnswered}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.optionIndexContainer}>
+                    <Text style={styles.optionIndex}>
+                      {String.fromCharCode(65 + index)}
+                    </Text>
+                  </View>
+                  <Text style={getOptionTextStyle(index)}>{option}</Text>
+                  {hasAnswered && isCorrectAnswer(index) && (
+                    <Ionicons name="checkmark" size={18} color={colors.correct} />
+                  )}
+                  {isWrongAnswer && (
+                    <Animated.View style={wrongAnswerIndicatorStyle}>
+                      <Ionicons name="close" size={18} color={colors.incorrect} />
+                    </Animated.View>
+                  )}
+                </TouchableOpacity>
+              </Animated.View>
+            );
+          })}
+        </View>
+
+        {/* Explanation (shown after answer, if enabled in settings) */}
+        {showExplanation && showExplanations && (
+          <Animated.View
+            entering={FadeIn.duration(300)}
+            style={styles.explanationContainer}
+          >
+            <View style={styles.explanationHeader}>
+              <View style={styles.explanationLabelRow}>
+                <Ionicons name="bulb" size={16} color={colors.primary} />
+                <Text style={styles.explanationLabel}>Explanation</Text>
+              </View>
+              <View style={[
+                styles.resultBadge,
+                selectedAnswer === question.correctAnswer
+                  ? styles.resultBadgeCorrect
+                  : styles.resultBadgeWrong
+              ]}>
+                <Text style={styles.resultBadgeText}>
+                  {selectedAnswer === question.correctAnswer ? 'Correct!' : 'Keep Learning!'}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.explanationText}>{question.explanation}</Text>
+            <Text style={styles.swipeHint}>Swipe up for next question</Text>
+          </Animated.View>
+        )}
+
+        {/* Minimal feedback when explanations are disabled */}
+        {showExplanation && !showExplanations && (
+          <Animated.View
+            entering={FadeIn.duration(300)}
+            style={styles.minimalFeedback}
+          >
+            <Text style={[
+              styles.minimalFeedbackText,
+              selectedAnswer === question.correctAnswer
+                ? styles.minimalFeedbackCorrect
+                : styles.minimalFeedbackWrong
+            ]}>
+              {selectedAnswer === question.correctAnswer ? 'Correct!' : 'Wrong'}
+            </Text>
+            <Text style={styles.swipeHintMinimal}>Swipe up for next</Text>
+          </Animated.View>
         )}
       </View>
-
-      {/* Options */}
-      <View style={styles.optionsContainer}>
-        {question.options?.map((option, index) => {
-          const isWrongAnswer = hasAnswered && isSelectedAnswer(index) && !isCorrectAnswer(index);
-          
-          return (
-            <Animated.View
-              key={index}
-              style={isWrongAnswer ? shakeAnimatedStyle : undefined}
-            >
-              <TouchableOpacity
-                style={getOptionStyle(index)}
-                onPress={() => handleOptionPress(index)}
-                disabled={hasAnswered}
-                activeOpacity={0.7}
-              >
-                <View style={styles.optionIndexContainer}>
-                  <Text style={styles.optionIndex}>
-                    {String.fromCharCode(65 + index)}
-                  </Text>
-                </View>
-                <Text style={getOptionTextStyle(index)}>{option}</Text>
-                {hasAnswered && isCorrectAnswer(index) && (
-                  <Ionicons name="checkmark" size={20} color={colors.correct} />
-                )}
-                {isWrongAnswer && (
-                  <Animated.View style={wrongAnswerIndicatorStyle}>
-                    <Ionicons name="close" size={20} color={colors.incorrect} />
-                  </Animated.View>
-                )}
-              </TouchableOpacity>
-            </Animated.View>
-          );
-        })}
-      </View>
-
-      {/* Explanation (shown after answer, if enabled in settings) */}
-      {showExplanation && showExplanations && (
-        <Animated.View
-          entering={FadeIn.duration(300)}
-          style={styles.explanationContainer}
-        >
-          <View style={styles.explanationHeader}>
-            <View style={styles.explanationLabelRow}>
-              <Ionicons name="bulb" size={16} color={colors.primary} />
-              <Text style={styles.explanationLabel}>Explanation</Text>
-            </View>
-            <View style={[
-              styles.resultBadge,
-              selectedAnswer === question.correctAnswer 
-                ? styles.resultBadgeCorrect 
-                : styles.resultBadgeWrong
-            ]}>
-              <Text style={styles.resultBadgeText}>
-                {selectedAnswer === question.correctAnswer ? 'Correct!' : 'Keep Learning!'}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.explanationText}>{question.explanation}</Text>
-          <Text style={styles.swipeHint}>Swipe up for next question</Text>
-        </Animated.View>
-      )}
-
-      {/* Minimal feedback when explanations are disabled */}
-      {showExplanation && !showExplanations && (
-        <Animated.View
-          entering={FadeIn.duration(300)}
-          style={styles.minimalFeedback}
-        >
-          <Text style={[
-            styles.minimalFeedbackText,
-            selectedAnswer === question.correctAnswer 
-              ? styles.minimalFeedbackCorrect 
-              : styles.minimalFeedbackWrong
-          ]}>
-            {selectedAnswer === question.correctAnswer ? 'Correct!' : 'Wrong'}
-          </Text>
-          <Text style={styles.swipeHintMinimal}>Swipe up for next</Text>
-        </Animated.View>
-      )}
+      {/* End of contentWrapper */}
 
       {/* Report Modal */}
       <Modal
@@ -682,8 +698,17 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     paddingHorizontal: spacing.base,
     paddingTop: 115,
-    paddingBottom: 130,
+    paddingBottom: 180, // Increased to prevent options from hiding behind stats bar
     justifyContent: 'flex-start',
+    alignItems: 'center', // Center content horizontally for iPad
+  },
+  contentWrapper: {
+    width: '100%',
+  },
+  contentWrapperTablet: {
+    maxWidth: MAX_CONTENT_WIDTH_LANDSCAPE,
+    width: '100%',
+    paddingHorizontal: spacing.lg,
   },
   revisitBadge: {
     flexDirection: 'row',
@@ -858,17 +883,18 @@ const styles = StyleSheet.create({
   },
   optionsContainer: {
     gap: spacing.sm,
+    marginBottom: spacing.md, // Add margin to ensure spacing before explanation
   },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.card,
     borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
     borderWidth: 1,
     borderColor: colors.border,
-    gap: spacing.sm,
+    gap: spacing.xs,
   },
   optionCorrect: {
     backgroundColor: colors.correctBg,
@@ -882,9 +908,9 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   optionIndexContainer: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: colors.backgroundSecondary,
     justifyContent: 'center',
     alignItems: 'center',
@@ -896,10 +922,11 @@ const styles = StyleSheet.create({
   },
   optionText: {
     flex: 1,
-    fontSize: typography.fontSize.sm,
+    fontSize: typography.fontSize.xs,
     color: colors.textPrimary,
     fontWeight: '500',
-    lineHeight: typography.fontSize.sm * 1.4,
+    lineHeight: typography.fontSize.xs * 1.4,
+    flexWrap: 'wrap', // Allow text to wrap to multiple lines
   },
   optionTextCorrect: {
     color: colors.correct,

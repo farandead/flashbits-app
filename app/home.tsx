@@ -11,12 +11,19 @@ import {
 import { useRouter } from 'expo-router';
 // Animations removed for a cleaner, professional look
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useSettings } from '@/context/SettingsContext';
 import { useAuth } from '@/context/AuthContext';
 import { getUserProfile, UserProfile } from '@/services/userService';
 import { debugError } from '@/utils/debug';
+import {
+  getCenteredContainerStyle,
+  getResponsiveHorizontalPadding,
+  MAX_CONTENT_WIDTH_LANDSCAPE,
+  isTablet,
+} from '@/utils/responsive';
 // Loading now happens on dedicated /loading page
 
 type IoniconsName = keyof typeof Ionicons.glyphMap;
@@ -69,7 +76,7 @@ export default function LandingPage() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [emailVerified, setEmailVerified] = useState(true); // Default to true to avoid flashing banner
   const [showVerificationBanner, setShowVerificationBanner] = useState(false);
-  
+
   // Load user profile when screen appears - use cache first for instant display
   useEffect(() => {
     const fetchProfile = async () => {
@@ -80,7 +87,7 @@ export default function LandingPage() {
           if (cachedProfile) {
             setUserProfile(cachedProfile);
           }
-          
+
           // Then fetch fresh data in background (will update cache and state)
           const freshProfile = await getUserProfile(user.uid, false);
           if (freshProfile) {
@@ -110,7 +117,7 @@ export default function LandingPage() {
   }, [user]);
 
   // Get display name
-  const displayName = userProfile?.name 
+  const displayName = userProfile?.name
 
   const handleStartPractice = async () => {
     if (hapticFeedback) {
@@ -140,6 +147,11 @@ export default function LandingPage() {
     router.push('/');
   };
 
+  const scrollContentStyle = {
+    ...styles.scrollContent,
+    paddingHorizontal: getResponsiveHorizontalPadding(spacing.xl),
+  };
+
   return (
     <View style={styles.container}>
       {/* Background */}
@@ -147,7 +159,10 @@ export default function LandingPage() {
 
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[
+          scrollContentStyle,
+          getCenteredContainerStyle(MAX_CONTENT_WIDTH_LANDSCAPE),
+        ]}
         showsVerticalScrollIndicator={false}
       >
         {/* Header with settings */}
@@ -209,13 +224,13 @@ export default function LandingPage() {
 
           {/* Logo */}
           <View style={styles.logoContainer}>
-            <Image 
-              source={require('@/assets/icons/in-app-icon.png')} 
+            <Image
+              source={require('@/assets/icons/in-app-icon.png')}
               style={styles.logoImage}
               resizeMode="contain"
             />
           </View>
-          
+
           {/* Tagline */}
           <Text style={styles.tagline}>
             Master coding interviews, one swipe at a time
@@ -313,7 +328,7 @@ export default function LandingPage() {
             Built for developers, by developers
           </Text>
           <View style={styles.footerDivider} />
-          <Text style={styles.versionText}>v1.0.0</Text>
+          <Text style={styles.versionText}>v{Constants.expoConfig?.version || '1.0.0'}</Text>
         </View>
       </ScrollView>
     </View>
@@ -426,7 +441,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderSubtle,
   },
-  
+
   // Welcome Message
   heroSection: {
     alignItems: 'center',
@@ -548,6 +563,7 @@ const styles = StyleSheet.create({
   },
   featuresSection: {
     marginBottom: spacing.xl,
+    width: '100%',
   },
   sectionTitle: {
     fontSize: typography.fontSize.sm,
@@ -561,9 +577,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+    width: '100%',
   },
   featureCard: {
-    width: (SCREEN_WIDTH - spacing.xl * 2 - spacing.sm) / 2,
+    flexBasis: '48%',
+    flexGrow: 1,
     backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.md,
@@ -593,6 +611,7 @@ const styles = StyleSheet.create({
   quickActions: {
     gap: spacing.sm,
     marginBottom: spacing.xl,
+    width: '100%',
   },
   quickActionButton: {
     flexDirection: 'row',

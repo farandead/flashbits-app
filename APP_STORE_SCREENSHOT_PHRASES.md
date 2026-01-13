@@ -2,19 +2,15 @@
 
 ## Hero Headlines (Main Screenshot)
 
-1. **"Swipe Your Way to Big Tech"**
-3. **"Interview Prep That Doesn't Suck"**
-4. **"New Questions Every week. Zero Boredom."**
-
-## Feature Highlights
-
-### Swipe-Based Learning
+  **"Swipe Your Way to Big Tech"**
+  **"Interview Prep That Doesn't Suck"**
+  **"New Questions Every week. Zero Boredom."**
 - **"Swipe to Get Smarter, Not Dumber"**
 - **"No Scrolling. Just Swiping."**
+- **"Code. Swipe. Repeat."**
 
 ### Gamification
 - **"Earn XP. Climb Ranks. Get Hired."**
-- **"Level Up from n00b to Legend"**
 - **"Build Streaks. Build Skills."**
 - **"Gamified Interview Prep"**
 

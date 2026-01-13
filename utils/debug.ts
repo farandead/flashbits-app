@@ -6,25 +6,25 @@
  */
 
 // Master switch - set to false to disable all debug logging
-const DEBUG_ENABLED = false;
+const DEBUG_ENABLED = true;
 
 // Category toggles - enable/disable specific debug areas
 const DEBUG_CATEGORIES = {
   auth: true,        // Authentication & login flow
-  firebase: true,    // Firebase operations
-  settings: true,    // Settings persistence
+  firebase: false,    // Firebase operations
+  settings: false,    // Settings persistence
   navigation: false,  // Screen navigation
-  questions: true,   // Question loading & filtering
-  storage: true,     // AsyncStorage operations
-  api: true,         // API calls
+  questions: false,   // Question loading & filtering
+  storage: false,     // AsyncStorage operations
+  api: false,         // API calls
   ui: false,          // UI state changes
-  revenueCat: true,   // RevenueCat operations
-  feed: true,         // Feed operations
+  revenueCat: false,   // RevenueCat operations
+  feed: false,         // Feed operations
   cache: true,       // Cache operations (hits, misses, writes)
   stats: true,       // User stats operations
-  network: true,     // Network connectivity & offline mode
+  network: false,     // Network connectivity & offline mode
   sync: true,        // Data synchronization operations
-  offline: true,     // Offline storage operations
+  offline: false,     // Offline storage operations
 };
 
 type DebugCategory = keyof typeof DEBUG_CATEGORIES;
@@ -54,10 +54,10 @@ const CATEGORY_EMOJIS: Record<DebugCategory, string> = {
  */
 export const debug = (category: DebugCategory, message: string, ...args: any[]) => {
   if (!DEBUG_ENABLED || !DEBUG_CATEGORIES[category]) return;
-  
+
   const emoji = CATEGORY_EMOJIS[category];
   const prefix = `${emoji} [${category.toUpperCase()}]`;
-  
+
   console.log(prefix, message, ...args);
 };
 
@@ -66,10 +66,10 @@ export const debug = (category: DebugCategory, message: string, ...args: any[]) 
  */
 export const debugWarn = (category: DebugCategory, message: string, ...args: any[]) => {
   if (!DEBUG_ENABLED || !DEBUG_CATEGORIES[category]) return;
-  
+
   const emoji = CATEGORY_EMOJIS[category];
   const prefix = `${emoji} [${category.toUpperCase()}] ⚠️`;
-  
+
   console.warn(prefix, message, ...args);
 };
 
@@ -79,7 +79,7 @@ export const debugWarn = (category: DebugCategory, message: string, ...args: any
 export const debugError = (category: DebugCategory, message: string, ...args: any[]) => {
   const emoji = CATEGORY_EMOJIS[category];
   const prefix = `${emoji} [${category.toUpperCase()}] ❌`;
-  
+
   console.error(prefix, message, ...args);
 };
 
@@ -88,10 +88,10 @@ export const debugError = (category: DebugCategory, message: string, ...args: an
  */
 export const debugSuccess = (category: DebugCategory, message: string, ...args: any[]) => {
   if (!DEBUG_ENABLED || !DEBUG_CATEGORIES[category]) return;
-  
+
   const emoji = CATEGORY_EMOJIS[category];
   const prefix = `${emoji} [${category.toUpperCase()}] ✅`;
-  
+
   console.log(prefix, message, ...args);
 };
 
@@ -109,7 +109,7 @@ export const isDebugEnabled = (category?: DebugCategory): boolean => {
  */
 export const debugGroup = (category: DebugCategory, groupName: string, callback: () => void) => {
   if (!DEBUG_ENABLED || !DEBUG_CATEGORIES[category]) return;
-  
+
   const emoji = CATEGORY_EMOJIS[category];
   console.group(`${emoji} [${category.toUpperCase()}] ${groupName}`);
   callback();
@@ -121,7 +121,7 @@ export const debugGroup = (category: DebugCategory, groupName: string, callback:
  */
 export const debugObject = (category: DebugCategory, label: string, obj: any) => {
   if (!DEBUG_ENABLED || !DEBUG_CATEGORIES[category]) return;
-  
+
   const emoji = CATEGORY_EMOJIS[category];
   console.log(`${emoji} [${category.toUpperCase()}] ${label}:`, JSON.stringify(obj, null, 2));
 };

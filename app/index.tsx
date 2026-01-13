@@ -26,6 +26,7 @@ import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import * as AppleAuthentication from 'expo-apple-authentication';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
 
 // Conditionally import Google Sign-In (only available in development/production builds, not Expo Go)
@@ -43,6 +44,11 @@ import { useAuth } from '@/context/AuthContext';
 import { hasCompletedOnboarding } from '@/services/userService';
 // SignInLoadingScreen removed - using InteractiveLoadingOverlay on destination screens instead
 import { debug, debugSuccess, debugError, debugWarn } from '@/utils/debug';
+import {
+  getCenteredContainerStyle,
+  getResponsiveHorizontalPadding,
+  MAX_CONTENT_WIDTH,
+} from '@/utils/responsive';
 
 // Required for web browser auth to work properly
 WebBrowser.maybeCompleteAuthSession();
@@ -156,7 +162,7 @@ export default function LoginScreen() {
     scheme: 'flashbits',
     path: 'auth',
   });
-  
+
   // Debug: Log redirect URI
   useEffect(() => {
     if (__DEV__) {
@@ -171,7 +177,7 @@ export default function LoginScreen() {
       }
     }
   }, [redirectUri]);
-  
+
 
   // GitHub OAuth request with manual discovery
   const [request, response, promptAsync] = AuthSession.useAuthRequest(
@@ -186,17 +192,17 @@ export default function LoginScreen() {
 
   // Redirect to home if user is already authenticated (on app launch only)
   // This effect should ONLY redirect when the app launches with a persisted user
-      // It should NOT redirect during an active login flow (when isLoading is true)
+  // It should NOT redirect during an active login flow (when isLoading is true)
   useEffect(() => {
     const checkAuthAndRedirect = async () => {
-      debug('navigation', 'Checking auth state...', { 
-        isAuthenticated, 
-        authLoading, 
-        user: user?.email, 
+      debug('navigation', 'Checking auth state...', {
+        isAuthenticated,
+        authLoading,
+        user: user?.email,
         isRedirecting,
         isLoading,
       });
-      
+
       if (authLoading) {
         // Still loading auth state, wait
         return;
@@ -212,10 +218,10 @@ export default function LoginScreen() {
 
       if (isAuthenticated && user) {
         debugSuccess('auth', 'User already authenticated on app launch...');
-        
+
         // Check if this is an email/password user who hasn't verified their email
         const isEmailUser = user.providerData[0]?.providerId === 'password';
-        
+
         if (isEmailUser && !user.emailVerified) {
           debug('auth', 'Email user not verified, showing verification screen');
           setVerificationEmail(user.email || '');
@@ -223,12 +229,12 @@ export default function LoginScreen() {
           setCheckingAuth(false);
           return;
         }
-        
+
         setIsRedirecting(true); // Prevent any other redirects
-        
+
         // User is logged in and verified, check if they completed onboarding
         const completedOnboarding = await hasCompletedOnboarding(user.uid);
-        
+
         // Navigate to loading screen - it will load data and navigate to home/onboarding
         debugSuccess('navigation', 'User authenticated, redirecting to loading screen...');
         router.replace('/loading');
@@ -257,19 +263,19 @@ export default function LoginScreen() {
     try {
       setIsLoading(true);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
+
       // Call your Firebase Cloud Function
       // Uses environment variable, falls back to default for development
       const CLOUD_FUNCTION_URL = process.env.EXPO_PUBLIC_CLOUD_FUNCTION_URL;
-      
+
       if (!CLOUD_FUNCTION_URL) {
         throw new Error('EXPO_PUBLIC_CLOUD_FUNCTION_URL is not set');
       }
-      
+
       // Add timeout to fetch request (60 seconds)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000);
-      
+
       const response = await fetch(CLOUD_FUNCTION_URL, {
         method: 'POST',
         headers: {
@@ -278,7 +284,7 @@ export default function LoginScreen() {
         body: JSON.stringify({ code }),
         signal: controller.signal,
       });
-      
+
       clearTimeout(timeoutId);
 
       // Check if response is OK and has JSON content
@@ -306,7 +312,7 @@ export default function LoginScreen() {
         user?: { uid: string };
         error?: string;
       };
-      
+
       try {
         const responseText = await response.text();
         if (!responseText || responseText.trim() === '') {
@@ -329,24 +335,24 @@ export default function LoginScreen() {
       // Sign in to Firebase with the custom token
       const { signInWithCustomToken } = await import('firebase/auth');
       const { auth } = await import('@/config/firebase');
-      
+
       await signInWithCustomToken(auth, data.customToken);
-      
+
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       // Prevent useEffect from also redirecting
       setIsRedirecting(true);
-      
+
       // Navigate immediately - loading will happen on destination screen
       setIsLoading(false);
-      
+
       // Check if new user needs onboarding (in background)
       const hasOnboarded = await hasCompletedOnboarding(data.user.uid);
-      
-        // Navigate to loading screen - it will load data and navigate to home/onboarding
-        debug('navigation', 'Navigating to loading screen...');
-        router.replace('/loading');
-      
+
+      // Navigate to loading screen - it will load data and navigate to home/onboarding
+      debug('navigation', 'Navigating to loading screen...');
+      router.replace('/loading');
+
     } catch (error: any) {
       debugError('auth', 'GitHub auth error:', error);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -354,7 +360,7 @@ export default function LoginScreen() {
       setIsLoading(false);
     }
   };
-  
+
   // Apple Sign-In availability check
   useEffect(() => {
     const checkAppleAuth = async () => {
@@ -368,8 +374,8 @@ export default function LoginScreen() {
   if (authLoading || checkingAuth) {
     return (
       <View style={[styles.container, styles.loadingContainer]}>
-        <ActivityIndicator 
-          size="large" 
+        <ActivityIndicator
+          size="large"
           color={colors.primary}
           accessibilityLabel="Loading"
         />
@@ -402,6 +408,11 @@ export default function LoginScreen() {
 
       await signInWithCredential(auth, oauthCredential);
 
+      debug('auth', 'Apple sign-in complete. Firebase user:', auth.currentUser?.uid);
+
+      // Note: We no longer capture/store Apple's fullName
+      // Users will choose their own username during onboarding
+
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       // Prevent useEffect from also redirecting
@@ -414,19 +425,19 @@ export default function LoginScreen() {
       const user = auth.currentUser;
       if (user) {
         const hasOnboarded = await hasCompletedOnboarding(user.uid);
-        
+
         // Navigate to loading screen - it will load data and navigate to home/onboarding
         router.replace('/loading');
       }
     } catch (error: any) {
       debugError('auth', 'Apple auth error:', error);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      
+
       if (error.code === 'ERR_CANCELED') {
         // User canceled the sign-in
         return;
       }
-      
+
       Alert.alert('Error', error.message || 'Failed to complete Apple sign in.');
     } finally {
       setIsLoading(false);
@@ -462,12 +473,12 @@ export default function LoginScreen() {
     try {
       setIsLoading(true);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
+
       if (!request) {
         Alert.alert('Error', 'GitHub sign in is not ready. Please try again.');
         return;
       }
-      
+
       await promptAsync();
     } catch (error) {
       debugError('auth', 'GitHub sign in error:', error);
@@ -512,23 +523,23 @@ export default function LoginScreen() {
 
       // Sign in with Google
       const userInfo = await GoogleSignin.signIn();
-      
+
       // Validate response structure
       if (!userInfo) {
         throw new Error('Google Sign-In returned no user information. Please try again.');
       }
-      
+
       if (!userInfo.data) {
         throw new Error('Google Sign-In response is missing data. Please try again.');
       }
-      
+
       const idToken = userInfo.data.idToken;
-      
+
       if (!idToken) {
         throw new Error('No idToken returned from Google Sign-In. Please try again.');
       }
 
-  
+
 
       // Create Firebase credential and sign in
       const credential = GoogleAuthProvider.credential(idToken);
@@ -546,23 +557,23 @@ export default function LoginScreen() {
       const user = auth.currentUser;
       if (user) {
         const hasOnboarded = await hasCompletedOnboarding(user.uid);
-        
+
         // Navigate to loading screen first - it will load data and then navigate to home/onboarding
         router.replace('/loading');
       }
     } catch (error: any) {
       debugError('auth', 'Google sign in error:', error);
-      
+
       // Handle user cancellation gracefully
       if (error.code === 'SIGN_IN_CANCELLED' || error.code === '10') {
         // User cancelled, don't show error
         setIsLoading(false);
         return;
       }
-      
+
       // Handle specific error cases
       let errorMessage = 'Google sign in failed. Please try again.';
-      
+
       if (error.message) {
         errorMessage = error.message;
       } else if (error.code) {
@@ -580,7 +591,7 @@ export default function LoginScreen() {
             errorMessage = `Google sign in failed (${error.code}). Please try again.`;
         }
       }
-      
+
       Alert.alert('Sign In Error', errorMessage);
       setIsLoading(false);
     }
@@ -601,19 +612,19 @@ export default function LoginScreen() {
     try {
       setIsLoading(true);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
+
       // Use Firebase auth
-      const result = isSignUp 
+      const result = isSignUp
         ? await signUpWithEmail(email, password)
         : await signInWithEmail(email, password);
-      
+
       if (result.success) {
         // Send verification email for new signups
         if (isSignUp) {
           try {
             const { sendEmailVerification } = await import('firebase/auth');
             const { auth } = await import('@/config/firebase');
-            
+
             const currentUser = auth.currentUser;
             if (currentUser && !currentUser.emailVerified) {
               await sendEmailVerification(currentUser);
@@ -638,7 +649,7 @@ export default function LoginScreen() {
           // Existing user signing in - check if email is verified
           const { auth } = await import('@/config/firebase');
           const currentUser = auth.currentUser;
-          
+
           if (currentUser && !currentUser.emailVerified && currentUser.providerData[0]?.providerId === 'password') {
             // Unverified email user - show verification screen
             setVerificationEmail(currentUser.email || email);
@@ -652,10 +663,10 @@ export default function LoginScreen() {
         // User is verified or using OAuth - proceed normally
         // Prevent useEffect from also redirecting
         setIsRedirecting(true);
-        
+
         // Navigate immediately - loading will happen on destination screen
         setIsLoading(false);
-        
+
         // Check if user needs onboarding (in background)
         const { auth } = await import('@/config/firebase');
         const currentUser = auth.currentUser;
@@ -687,21 +698,21 @@ export default function LoginScreen() {
     try {
       setIsCheckingVerification(true);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
+
       const { auth } = await import('@/config/firebase');
       const currentUser = auth.currentUser;
-      
+
       if (currentUser) {
         // Reload user to get latest emailVerified status
         await currentUser.reload();
-        
+
         if (currentUser.emailVerified) {
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          
+
           // Prevent useEffect from also redirecting
           setIsRedirecting(true);
           setIsCheckingVerification(false);
-          
+
           // Navigate to loading screen - it will load data and navigate to onboarding
           router.replace('/loading');
         } else {
@@ -726,11 +737,11 @@ export default function LoginScreen() {
     try {
       setIsLoading(true);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      
+
       const { sendEmailVerification } = await import('firebase/auth');
       const { auth } = await import('@/config/firebase');
       const currentUser = auth.currentUser;
-      
+
       if (currentUser) {
         await sendEmailVerification(currentUser);
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -768,7 +779,7 @@ export default function LoginScreen() {
   // Render email verification step
   const renderVerifyEmail = () => (
     <View style={styles.phoneContainer}>
-      <Pressable 
+      <Pressable
         style={styles.backButton}
         onPress={handleBackToLogin}
       >
@@ -821,7 +832,7 @@ export default function LoginScreen() {
         )}
       </Pressable>
 
-      <Pressable 
+      <Pressable
         style={styles.resendButton}
         onPress={handleResendVerification}
         disabled={isLoading}
@@ -838,7 +849,7 @@ export default function LoginScreen() {
   // Render email input step
   const renderEmailInput = () => (
     <View style={styles.phoneContainer}>
-      <Pressable 
+      <Pressable
         style={styles.backButton}
         onPress={() => {
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -900,11 +911,11 @@ export default function LoginScreen() {
               {/* Strength Bar */}
               <View style={styles.strengthBarContainer}>
                 <View style={styles.strengthBarBackground}>
-                  <View 
+                  <View
                     style={[
-                      styles.strengthBarFill, 
+                      styles.strengthBarFill,
                       { width: `${progressWidth}%`, backgroundColor: strengthColor }
-                    ]} 
+                    ]}
                   />
                 </View>
                 <Text style={[styles.strengthLabel, { color: strengthColor }]}>
@@ -916,10 +927,10 @@ export default function LoginScreen() {
               <View style={styles.requirementsList}>
                 {checks.map((check, index) => (
                   <View key={index} style={styles.requirementItem}>
-                    <Ionicons 
-                      name={check.met ? 'checkmark-circle' : 'ellipse-outline'} 
-                      size={14} 
-                      color={check.met ? colors.correct : colors.textMuted} 
+                    <Ionicons
+                      name={check.met ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={14}
+                      color={check.met ? colors.correct : colors.textMuted}
                     />
                     <Text style={[
                       styles.requirementText,
@@ -937,7 +948,7 @@ export default function LoginScreen() {
 
       {/* Forgot Password Link - Only show when signing in */}
       {!isSignUp && (
-        <Pressable 
+        <Pressable
           style={styles.forgotPasswordLink}
           onPress={() => {
             LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -951,7 +962,7 @@ export default function LoginScreen() {
 
       <Pressable
         style={[
-          styles.submitButton, 
+          styles.submitButton,
           (!email.trim() || (isSignUp ? getPasswordStrength(password).strength === 'weak' : password.length < 6)) && styles.submitButtonDisabled
         ]}
         onPress={handleEmailSubmit}
@@ -966,7 +977,7 @@ export default function LoginScreen() {
         )}
       </Pressable>
 
-      <Pressable 
+      <Pressable
         style={styles.toggleAuthMode}
         onPress={() => {
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -991,8 +1002,8 @@ export default function LoginScreen() {
       {/* Hero */}
       <View style={styles.heroSection}>
         <View style={styles.logoContainer}>
-          <Image 
-            source={require('@/assets/icons/in-app-icon.png')} 
+          <Image
+            source={require('@/assets/icons/in-app-icon.png')}
             style={styles.logoImage}
             resizeMode="contain"
             accessibilityLabel="flashbits logo"
@@ -1073,8 +1084,8 @@ export default function LoginScreen() {
       </View>
 
       {/* Skip for now */}
-      <Pressable 
-        style={styles.skipButton} 
+      <Pressable
+        style={styles.skipButton}
         onPress={handleSkip}
         accessibilityLabel="Continue as Guest"
         accessibilityIdentifier="login-button-guest"
@@ -1087,16 +1098,16 @@ export default function LoginScreen() {
       <View style={styles.termsContainer}>
         <Text style={styles.termsText}>
           By continuing, you agree to our{' '}
-          <Text 
+          <Text
             style={styles.termsLink}
-            onPress={() => Linking.openURL('https://flashbits.co/terms')}
-            accessibilityLabel="Terms of Service"
+            onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
+            accessibilityLabel="Terms of Use (EULA)"
             accessibilityRole="link"
           >
-            Terms of Service
+            Terms of Use (EULA)
           </Text>
           {' '}and{' '}
-          <Text 
+          <Text
             style={styles.termsLink}
             onPress={() => Linking.openURL('https://flashbits.co/privacy')}
             accessibilityLabel="Privacy Policy"
@@ -1115,7 +1126,7 @@ export default function LoginScreen() {
   // Render forgot password input step
   const renderForgotPassword = () => (
     <View style={styles.phoneContainer}>
-      <Pressable 
+      <Pressable
         style={styles.backButton}
         onPress={() => {
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1153,17 +1164,17 @@ export default function LoginScreen() {
 
       <Pressable
         style={[
-          styles.submitButton, 
+          styles.submitButton,
           !forgotPasswordEmail.trim() && styles.submitButtonDisabled
         ]}
         onPress={async () => {
           if (!forgotPasswordEmail.trim()) return;
-          
+
           setIsLoading(true);
           try {
             const result = await sendPasswordResetEmail(forgotPasswordEmail);
             setIsLoading(false);
-            
+
             if (result.success) {
               LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
               setAuthStep('forgot-password-confirmation');
@@ -1190,14 +1201,14 @@ export default function LoginScreen() {
   const renderForgotPasswordConfirmation = () => (
     <View style={styles.phoneContainer}>
       <View style={styles.confirmationContainer}>
-        <Animated.View 
+        <Animated.View
           entering={FadeIn.duration(300).delay(100)}
           style={styles.confirmationIconContainer}
         >
           <Ionicons name="mail-outline" size={40} color={colors.primary} />
         </Animated.View>
-        
-        <Animated.View 
+
+        <Animated.View
           entering={FadeIn.duration(300).delay(200)}
           style={styles.confirmationTextContainer}
         >
@@ -1207,15 +1218,15 @@ export default function LoginScreen() {
           </Text>
           <Text style={styles.confirmationEmail}>{forgotPasswordEmail}</Text>
         </Animated.View>
-        
-        <Animated.View 
+
+        <Animated.View
           entering={FadeIn.duration(300).delay(300)}
           style={styles.confirmationActions}
         >
           <Text style={styles.confirmationHint}>
             Click the link in the email to reset your password
           </Text>
-          
+
           <Pressable
             style={({ pressed }) => [
               styles.confirmationBackButton,
@@ -1255,9 +1266,14 @@ export default function LoginScreen() {
     }
   };
 
+  const containerStyle = {
+    ...styles.container,
+    paddingHorizontal: getResponsiveHorizontalPadding(spacing.lg),
+  };
+
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={containerStyle}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       {/* Background */}
@@ -1265,11 +1281,11 @@ export default function LoginScreen() {
       <View style={styles.backgroundGlow} />
 
       {/* Content with smooth fade transition */}
-      <Animated.View 
+      <Animated.View
         key={authStep}
         entering={FadeIn.duration(200)}
         exiting={FadeOut.duration(150)}
-        style={styles.contentContainer}
+        style={[styles.contentContainer, getCenteredContainerStyle(MAX_CONTENT_WIDTH)]}
       >
         {renderCurrentStep()}
       </Animated.View>
@@ -1406,7 +1422,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '500',
   },
-  
+
   // Email Input Styles
   emailInputContainer: {
     gap: spacing.sm,
@@ -1444,7 +1460,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '600',
   },
-  
+
   // Password Strength Styles
   passwordStrengthContainer: {
     marginTop: spacing.sm,
@@ -1493,7 +1509,7 @@ const styles = StyleSheet.create({
   requirementTextMet: {
     color: colors.correct,
   },
-  
+
   // Phone Input Styles
   phoneContainer: {
     width: '100%',
@@ -1621,7 +1637,7 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '500',
   },
-  
+
   // Email Verification Styles
   verifyIconContainer: {
     alignItems: 'center',
@@ -1661,7 +1677,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     flex: 1,
   },
-  
+
   // Forgot Password Styles
   forgotPasswordLink: {
     alignSelf: 'flex-end',

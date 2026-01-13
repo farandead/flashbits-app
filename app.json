@@ -2,7 +2,7 @@
   "expo": {
     "name": "flashbits",
     "slug": "flashbits",
-    "version": "1.0.1",
+    "version": "1.0.5",
     "orientation": "portrait",
     "icon": "./assets/icons/icon.png",
     "scheme": "flashbits",
@@ -14,18 +14,33 @@
       "backgroundColor": "#0D0D0D"
     },
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
       "bundleIdentifier": "com.flashbits.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "usesAppleSignIn": true,
+      "splash": {
+        "image": "./assets/icons/splash-icon.png",
+        "tabletImage": "./assets/icons/ipad-splash-icon.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#0D0D0D"
+      },
       "infoPlist": {
         "UIBackgroundModes": [
-            "remote-notification"
+          "remote-notification"
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIRequiresFullScreen": false,
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown"
+        ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ]
       },
       "appleTeamId": "8D4VX8MVPN",
-      "buildNumber": "1"
+      "buildNumber": "2"
     },
     "android": {
       "adaptiveIcon": {

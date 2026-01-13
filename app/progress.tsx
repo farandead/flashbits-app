@@ -1152,10 +1152,12 @@ const styles = StyleSheet.create({
   ranksGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.xs,
+    marginHorizontal: -spacing.xs / 2,
   },
   rankCard: {
     width: (SCREEN_WIDTH - spacing.lg * 2 - spacing.xs * 2) / 3,
+    marginHorizontal: spacing.xs / 2,
+    marginBottom: spacing.xs,
     backgroundColor: colors.cardSubtle,
     borderRadius: borderRadius.md,
     padding: spacing.sm,

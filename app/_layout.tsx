@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, View, Platform, Dimensions } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { colors } from '@/constants/theme';
 import { SettingsProvider } from '@/context/SettingsContext';
 import { AuthProvider } from '@/context/AuthContext';
@@ -34,6 +36,39 @@ const smoothFadeFromBottomConfig = {
 };
 
 export default function RootLayout() {
+  // Lock orientation based on device type: landscape for iPad, portrait for iPhone
+  useEffect(() => {
+    const lockOrientation = async () => {
+      try {
+        // Determine if this is an iPad based on screen dimensions
+        const { width, height } = Dimensions.get('window');
+        const isIPad = Platform.OS === 'ios' && (Math.min(width, height) >= 768 || Math.max(width, height) >= 1024);
+
+        if (isIPad) {
+          // Lock iPad to landscape mode only
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+        } else {
+          // Lock iPhone/Android phones to portrait mode
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT);
+        }
+      } catch (error) {
+        // Silently fail if orientation lock is not supported (e.g., on web)
+        if (__DEV__ && Platform.OS !== 'web') {
+          console.warn('Failed to lock orientation:', error);
+        }
+      }
+    };
+
+    lockOrientation();
+
+    // Cleanup: unlock orientation when app unmounts (optional, but good practice)
+    return () => {
+      ScreenOrientation.unlockAsync().catch(() => {
+        // Ignore errors on unlock
+      });
+    };
+  }, []);
+
   return (
     <ErrorBoundary>
       <SafeAreaProvider>
@@ -54,7 +89,7 @@ export default function RootLayout() {
                         fullScreenGestureEnabled: true,
                       }}
                     >
-                      <Stack.Screen 
+                      <Stack.Screen
                         name="index"
                         options={{
                           ...smoothFadeConfig,

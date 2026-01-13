@@ -36,7 +36,14 @@ import { useAuth } from '@/context/AuthContext';
 import { saveUserProfile, ValidationError } from '@/services/userService';
 import { notificationService } from '@/services/notificationService';
 import { initializeUserStats } from '@/services/statsService';
-import { debug, debugError } from '@/utils/debug';
+import { debugError } from '@/utils/debug';
+import {
+  isTablet,
+  getResponsiveHorizontalPadding,
+  getResponsiveSpacing,
+  getCenteredContainerStyle,
+  MAX_CONTENT_WIDTH,
+} from '@/utils/responsive';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -55,29 +62,29 @@ const OCCUPATIONS = [
 ];
 
 const CODING_LEVELS = [
-  { 
-    id: 'beginner', 
-    label: 'Beginner', 
+  {
+    id: 'beginner',
+    label: 'Beginner',
     description: 'Just starting out with coding',
-    icon: 'leaf-outline' as const 
+    icon: 'leaf-outline' as const
   },
-  { 
-    id: 'intermediate', 
-    label: 'Intermediate', 
+  {
+    id: 'intermediate',
+    label: 'Intermediate',
     description: 'Comfortable with basics, learning DSA',
-    icon: 'trending-up-outline' as const 
+    icon: 'trending-up-outline' as const
   },
-  { 
-    id: 'advanced', 
-    label: 'Advanced', 
+  {
+    id: 'advanced',
+    label: 'Advanced',
     description: 'Strong DSA skills, practicing for interviews',
-    icon: 'flash-outline' as const 
+    icon: 'flash-outline' as const
   },
-  { 
-    id: 'expert', 
-    label: 'Expert', 
+  {
+    id: 'expert',
+    label: 'Expert',
     description: 'Very comfortable, fine-tuning skills',
-    icon: 'diamond-outline' as const 
+    icon: 'diamond-outline' as const
   },
 ];
 
@@ -93,7 +100,7 @@ const GOALS = [
 export default function OnboardingScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  
+
   const [currentStep, setCurrentStep] = useState<OnboardingStep>('welcome');
   const [name, setName] = useState('');
   const [occupation, setOccupation] = useState('');
@@ -105,9 +112,12 @@ export default function OnboardingScreen() {
   const currentStepIndex = steps.indexOf(currentStep);
   const progress = ((currentStepIndex + 1) / steps.length) * 100;
 
+  // Note: We no longer skip the welcome step for Apple users
+  // Everyone chooses their own username for privacy and consistency
+
   // Animated progress bar
   const animatedProgress = useSharedValue(progress);
-  
+
   useEffect(() => {
     animatedProgress.value = withSpring(progress, {
       damping: 20,
@@ -122,7 +132,7 @@ export default function OnboardingScreen() {
 
   const handleNext = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    
+
     const nextIndex = currentStepIndex + 1;
     if (nextIndex < steps.length) {
       setCurrentStep(steps[nextIndex]);
@@ -131,7 +141,7 @@ export default function OnboardingScreen() {
 
   const handleBack = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    
+
     const prevIndex = currentStepIndex - 1;
     if (prevIndex >= 0) {
       setCurrentStep(steps[prevIndex]);
@@ -142,7 +152,7 @@ export default function OnboardingScreen() {
     try {
       setIsLoading(true);
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      
+
       // Save user profile to Firestore
       if (user) {
         await saveUserProfile(user.uid, {
@@ -159,7 +169,7 @@ export default function OnboardingScreen() {
         try {
           await initializeUserStats(user.uid);
           if (__DEV__) {
-            debug('firebase', 'User stats initialized');
+            console.log('User stats initialized');
           }
         } catch (error) {
           if (__DEV__) {
@@ -168,12 +178,12 @@ export default function OnboardingScreen() {
           // Don't block onboarding if stats initialization fails
         }
       }
-      
+
       // Navigate to home
       router.replace('/home');
     } catch (error) {
       debugError('firebase', 'Error saving profile:', error);
-      
+
       // Show user-friendly error message for validation errors
       if (error instanceof ValidationError) {
         // Map validation error field to onboarding step
@@ -183,23 +193,23 @@ export default function OnboardingScreen() {
           'codingLevel': 'level',
           'goals': 'goals',
         };
-        
+
         // Navigate back to the step with the error
         const errorStep = fieldToStep[error.field || ''] || 'welcome';
-        
+
         // Stop loading first
         setIsLoading(false);
-        
+
         // Navigate to the step with the error
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         setCurrentStep(errorStep);
-        
+
         // Show alert after a brief delay to allow step transition
         setTimeout(() => {
           Alert.alert(
             'Validation Error',
             error.message || 'Please check your input and try again.',
-            [{ 
+            [{
               text: 'OK',
               onPress: () => {
                 // User can now see the step with the error and fix it
@@ -208,11 +218,11 @@ export default function OnboardingScreen() {
             }]
           );
         }, 300);
-        
+
         // Don't navigate away - user stays on the step with the error
         return;
       }
-      
+
       // For other errors, still navigate (graceful degradation)
       Alert.alert(
         'Error',
@@ -225,8 +235,8 @@ export default function OnboardingScreen() {
   };
 
   const toggleGoal = (goalId: string) => {
-    setSelectedGoals(prev => 
-      prev.includes(goalId) 
+    setSelectedGoals(prev =>
+      prev.includes(goalId)
         ? prev.filter(g => g !== goalId)
         : [...prev, goalId]
     );
@@ -257,14 +267,14 @@ export default function OnboardingScreen() {
 
   // Render Welcome Step
   const renderWelcome = () => (
-    <Animated.View 
+    <Animated.View
       entering={enteringTransition}
       exiting={exitingTransition}
       style={styles.stepContainer}
     >
       <View style={styles.welcomeContent}>
         <Text style={styles.welcomeTitle}>
-          Welcome to <Text style={styles.welcomeTitleAccent}>flashbits</Text>
+          Welcome to <Text style={styles.welcomeTitleAccent}>flash</Text><Text style={styles.welcomeTitleBits}>bits</Text>
         </Text>
         <Text style={styles.welcomeDescription}>
           Master coding interviews with 2000+ questions.{'\n'}
@@ -273,16 +283,18 @@ export default function OnboardingScreen() {
       </View>
 
       <View style={styles.nameInputSection}>
-        <Text style={styles.nameLabel}>What should we call you?</Text>
+        <Text style={styles.nameLabel}>Choose a username</Text>
         <TextInput
           style={styles.textInput}
-          placeholder="Enter your name"
+          placeholder="Enter a username"
           placeholderTextColor={colors.textMuted}
           value={name}
           onChangeText={setName}
           autoFocus
-          autoCapitalize="words"
+          autoCapitalize="none"
+          autoCorrect={false}
         />
+        <Text style={styles.usernameHint}>This is how you'll appear in the app</Text>
       </View>
 
       <View style={styles.privacySection}>
@@ -311,19 +323,20 @@ export default function OnboardingScreen() {
           <Pressable
             onPress={async () => {
               try {
-                const url = 'https://flashbits.co/terms';
+                // Apple's standard EULA - required for apps using Apple's standard Terms of Use
+                const url = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
                 const canOpen = await Linking.canOpenURL(url);
                 if (canOpen) {
                   await Linking.openURL(url);
                 } else {
-                  Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/terms');
+                  Alert.alert('Error', 'Unable to open the link. Please visit https://www.apple.com/legal/internet-services/itunes/dev/stdeula/');
                 }
               } catch (error) {
-                Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/terms');
+                Alert.alert('Error', 'Unable to open the link. Please visit https://www.apple.com/legal/internet-services/itunes/dev/stdeula/');
               }
             }}
           >
-            <Text style={styles.privacyLink}>Terms of Service</Text>
+            <Text style={styles.privacyLink}>Terms of Use (EULA)</Text>
           </Pressable>
         </View>
       </View>
@@ -332,7 +345,7 @@ export default function OnboardingScreen() {
 
   // Render Occupation Step
   const renderOccupation = () => (
-    <Animated.View 
+    <Animated.View
       entering={enteringTransition}
       exiting={exitingTransition}
       style={styles.stepContainer}
@@ -342,7 +355,7 @@ export default function OnboardingScreen() {
         This helps us tailor questions to your experience level
       </Text>
 
-      <ScrollView 
+      <ScrollView
         style={styles.optionsScroll}
         showsVerticalScrollIndicator={false}
       >
@@ -359,10 +372,10 @@ export default function OnboardingScreen() {
                 setOccupation(occ.id);
               }}
             >
-              <Ionicons 
-                name={occ.icon} 
-                size={20} 
-                color={occupation === occ.id ? colors.primary : colors.textSecondary} 
+              <Ionicons
+                name={occ.icon}
+                size={20}
+                color={occupation === occ.id ? colors.primary : colors.textSecondary}
               />
               <Text style={[
                 styles.optionLabel,
@@ -379,7 +392,7 @@ export default function OnboardingScreen() {
 
   // Render Level Step
   const renderLevel = () => (
-    <Animated.View 
+    <Animated.View
       entering={enteringTransition}
       exiting={exitingTransition}
       style={styles.stepContainer}
@@ -403,10 +416,10 @@ export default function OnboardingScreen() {
             }}
           >
             <View style={styles.levelIconContainer}>
-              <Ionicons 
-                name={level.icon} 
-                size={18} 
-                color={codingLevel === level.id ? colors.primary : colors.textSecondary} 
+              <Ionicons
+                name={level.icon}
+                size={18}
+                color={codingLevel === level.id ? colors.primary : colors.textSecondary}
               />
             </View>
             <View style={styles.levelInfo}>
@@ -429,7 +442,7 @@ export default function OnboardingScreen() {
 
   // Render Goals Step
   const renderGoals = () => (
-    <Animated.View 
+    <Animated.View
       entering={enteringTransition}
       exiting={exitingTransition}
       style={styles.stepContainer}
@@ -439,7 +452,7 @@ export default function OnboardingScreen() {
         Select all that apply - we'll help you get there
       </Text>
 
-      <ScrollView 
+      <ScrollView
         style={styles.optionsScroll}
         showsVerticalScrollIndicator={false}
       >
@@ -456,10 +469,10 @@ export default function OnboardingScreen() {
                 toggleGoal(goal.id);
               }}
             >
-              <Ionicons 
-                name={goal.icon} 
-                size={18} 
-                color={selectedGoals.includes(goal.id) ? colors.primary : colors.textSecondary} 
+              <Ionicons
+                name={goal.icon}
+                size={18}
+                color={selectedGoals.includes(goal.id) ? colors.primary : colors.textSecondary}
               />
               <Text style={[
                 styles.goalLabel,
@@ -481,7 +494,7 @@ export default function OnboardingScreen() {
 
   // Render Preview Step
   const renderPreview = () => (
-    <Animated.View 
+    <Animated.View
       entering={enteringTransition}
       exiting={exitingTransition}
       style={styles.stepContainer}
@@ -538,10 +551,10 @@ export default function OnboardingScreen() {
     const handleEnableNotifications = async () => {
       try {
         await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        
+
         // Request iOS notification permissions
         const hasPermission = await notificationService.requestPermissions();
-        
+
         if (hasPermission) {
           // Permissions granted - enable notifications with default settings
           await notificationService.saveSettings({
@@ -562,7 +575,7 @@ export default function OnboardingScreen() {
             motivationalNotifications: false,
           }, user?.uid);
         }
-        
+
         // Proceed to next step regardless of permission result
         handleNext();
       } catch (error) {
@@ -577,7 +590,7 @@ export default function OnboardingScreen() {
     };
 
     return (
-      <Animated.View 
+      <Animated.View
         entering={enteringTransition}
         exiting={exitingTransition}
         style={styles.stepContainer}
@@ -614,14 +627,14 @@ export default function OnboardingScreen() {
 
   // Render Complete Step
   const renderComplete = () => (
-    <Animated.View 
+    <Animated.View
       entering={FadeIn.duration(600).springify().damping(15)}
       style={styles.completeContainer}
     >
       <View style={styles.completeIconContainer}>
         <Ionicons name="checkmark-circle" size={56} color={colors.primary} />
       </View>
-      
+
       <Text style={styles.completeTitle}>You're all set, {name}!</Text>
       <Text style={styles.completeSubtitle}>
         We've personalized your experience. You'll start with questions matched to your level.
@@ -687,11 +700,11 @@ export default function OnboardingScreen() {
       {/* Progress Bar */}
       <View style={styles.progressContainer}>
         <View style={styles.progressBar}>
-          <Animated.View 
+          <Animated.View
             style={[styles.progressFill, animatedProgressStyle]}
           />
         </View>
-        <Animated.Text 
+        <Animated.Text
           style={styles.progressText}
           layout={Layout.springify().damping(15).stiffness(100)}
         >
@@ -707,9 +720,17 @@ export default function OnboardingScreen() {
       )}
 
       {/* Content */}
-      <View style={styles.content}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={[
+          styles.contentContainer,
+          getCenteredContainerStyle(MAX_CONTENT_WIDTH),
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
         {renderCurrentStep()}
-      </View>
+      </ScrollView>
 
       {/* Bottom Button */}
       <View style={styles.bottomContainer}>
@@ -761,7 +782,7 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     paddingTop: 56,
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: getResponsiveHorizontalPadding(spacing.lg),
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
@@ -786,26 +807,29 @@ const styles = StyleSheet.create({
   },
   backButton: {
     position: 'absolute',
-    top: 92,
-    left: spacing.lg,
+    top: 70,
+    left: getResponsiveHorizontalPadding(spacing.lg),
     padding: spacing.xs,
     zIndex: 10,
   },
   content: {
     flex: 1,
-    paddingHorizontal: spacing.lg,
+  },
+  contentContainer: {
+    paddingHorizontal: getResponsiveHorizontalPadding(spacing.lg),
     paddingTop: spacing['2xl'],
+    paddingBottom: spacing.xl,
   },
   stepContainer: {
-    flex: 1,
+    minHeight: '100%',
+    justifyContent: 'flex-start',
   },
   iconContainer: {
     marginBottom: spacing.lg,
   },
   welcomeContent: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingTop: spacing['2xl'],
+    marginBottom: getResponsiveSpacing(spacing.xl),
+    paddingTop: spacing.md,
   },
   welcomeTitle: {
     fontSize: typography.fontSize.xl,
@@ -817,6 +841,10 @@ const styles = StyleSheet.create({
   },
   welcomeTitleAccent: {
     color: colors.primary,
+    fontWeight: '600',
+  },
+  welcomeTitleBits: {
+    color: colors.textPrimary,
     fontWeight: '600',
   },
   welcomeDescription: {
@@ -832,11 +860,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.textPrimary,
     marginBottom: spacing.xs,
+    marginTop: spacing.sm,
   },
   stepSubtitle: {
     fontSize: typography.fontSize.xs,
     color: colors.textSecondary,
-    marginBottom: spacing.xl,
+    marginBottom: getResponsiveSpacing(spacing.xl),
     lineHeight: typography.fontSize.sm * 1.5,
   },
   previewTitle: {
@@ -844,18 +873,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.textPrimary,
     marginBottom: spacing.xs,
+    marginTop: spacing.md,
     textAlign: 'center',
   },
   previewSubtitle: {
     fontSize: typography.fontSize.xs,
     color: colors.textSecondary,
-    marginBottom: spacing.md,
+    marginBottom: getResponsiveSpacing(spacing.md),
     textAlign: 'center',
     lineHeight: typography.fontSize.xs * 1.4,
   },
   nameInputSection: {
     paddingBottom: spacing.md,
-    paddingTop: spacing.lg,
+    paddingTop: getResponsiveSpacing(spacing.lg),
+    marginTop: spacing.md,
   },
   nameLabel: {
     fontSize: typography.fontSize.xs,
@@ -864,6 +895,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     letterSpacing: 0.2,
     textTransform: 'uppercase',
+  },
+  usernameHint: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+    opacity: 0.7,
   },
   privacySection: {
     paddingTop: spacing.md,
@@ -892,8 +929,8 @@ const styles = StyleSheet.create({
   mockupContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: spacing.md,
-    marginBottom: spacing.lg,
+    marginTop: getResponsiveSpacing(spacing.md),
+    marginBottom: getResponsiveSpacing(spacing.lg),
   },
   mockupWrapper: {
     transform: [
@@ -901,9 +938,12 @@ const styles = StyleSheet.create({
     ],
   },
   mockupImage: {
-    width: SCREEN_WIDTH * 0.5,
-    height: SCREEN_WIDTH * 0.5 * 1.8,
-    maxHeight: 480,
+    width: isTablet() ? Math.min(SCREEN_WIDTH * 0.35, 300) : SCREEN_WIDTH * 0.5,
+    height: isTablet()
+      ? Math.min(SCREEN_WIDTH * 0.35 * 1.8, 540)
+      : SCREEN_WIDTH * 0.5 * 1.8,
+    maxHeight: isTablet() ? 540 : 480,
+    maxWidth: isTablet() ? 300 : undefined,
     borderRadius: borderRadius.lg,
     shadowColor: '#000',
     shadowOffset: {
@@ -915,7 +955,8 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   featureList: {
-    marginTop: spacing.md,
+    marginTop: getResponsiveSpacing(spacing.md),
+    marginBottom: spacing.md,
     gap: spacing.xs,
   },
   featureItem: {
@@ -962,7 +1003,9 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xl,
   },
   optionCard: {
-    width: (SCREEN_WIDTH - spacing.lg * 2 - spacing.sm) / 2,
+    width: isTablet()
+      ? (MAX_CONTENT_WIDTH - getResponsiveHorizontalPadding(spacing.lg) * 2 - spacing.sm) / 2
+      : (SCREEN_WIDTH - spacing.lg * 2 - spacing.sm) / 2,
     backgroundColor: 'transparent',
     borderRadius: borderRadius.md,
     borderWidth: 1,
@@ -1061,9 +1104,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   completeContainer: {
-    flex: 1,
     alignItems: 'center',
     paddingTop: spacing['2xl'],
+    paddingBottom: spacing.xl,
   },
   completeIconContainer: {
     marginBottom: spacing.lg,
@@ -1092,11 +1135,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
   },
   notificationsContent: {
-    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingTop: spacing.xl,
+    paddingBottom: spacing.xl,
     paddingHorizontal: spacing.xl,
+    minHeight: 400,
   },
   notificationIconContainer: {
     width: 64,
@@ -1178,7 +1222,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   bottomContainer: {
-    padding: spacing.lg,
+    paddingHorizontal: getResponsiveHorizontalPadding(spacing.lg),
+    paddingVertical: spacing.lg,
     paddingBottom: spacing['2xl'],
   },
   continueButton: {

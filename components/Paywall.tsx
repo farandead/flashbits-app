@@ -9,16 +9,23 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Animated, { FadeInUp, FadeIn } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { colors, spacing, borderRadius, typography } from '@/constants/theme';
 import { useRevenueCat } from '@/context/RevenueCatContext';
+import { useAuth } from '@/context/AuthContext';
 import { PurchasesPackage } from 'react-native-purchases';
 import PurchasesUI from 'react-native-purchases-ui';
 import type { PurchasesPackage as PurchasesPackageType } from 'react-native-purchases';
 import { debugError } from '@/utils/debug';
+import {
+  getCenteredContainerStyle,
+  getResponsiveHorizontalPadding,
+  MAX_CONTENT_WIDTH_LARGE,
+} from '@/utils/responsive';
 
 interface PaywallProps {
   visible: boolean;
@@ -76,6 +83,7 @@ const Paywall: React.FC<PaywallProps> = ({
     refreshCustomerInfo,
     isPro
   } = useRevenueCat();
+  const { isAuthenticated } = useAuth();
   
   const [selectedPlan, setSelectedPlan] = useState<'monthly' | 'yearly'>('monthly');
   const alertTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -217,10 +225,49 @@ const Paywall: React.FC<PaywallProps> = ({
     return pkg.product.priceString;
   };
 
+  // Get product title (required by App Store - should match in-app purchase product name)
+  const getProductTitle = (pkg: PurchasesPackageType | null): string => {
+    if (!pkg || !pkg.product) return 'Loading...';
+    // Use product title from App Store Connect (matches in-app purchase product name)
+    return pkg.product.title || 'Pro Subscription';
+  };
+
+  // Calculate monthly equivalent for yearly subscriptions (price per unit)
+  const getMonthlyEquivalent = (pkg: PurchasesPackageType | null): string | null => {
+    if (!pkg || !pkg.product) return null;
+    
+    const identifier = pkg.identifier.toLowerCase();
+    const isYearly = identifier.includes('yearly') || 
+                     identifier.includes('annual') || 
+                     identifier.includes('year');
+    
+    if (isYearly && pkg.product.price) {
+      // Calculate monthly price: yearly price / 12
+      const monthlyPrice = pkg.product.price / 12;
+      // Format to 2 decimal places
+      const formatted = monthlyPrice.toFixed(2);
+      // Get currency symbol from priceString (e.g., "$9.99" -> "$")
+      const priceString = pkg.product.priceString || '';
+      const currencyMatch = priceString.match(/^[^\d\s]+/);
+      const currency = currencyMatch ? currencyMatch[0] : '$';
+      
+      return `${currency}${formatted}/mo`;
+    }
+    
+    return null;
+  };
+
   // Get package description
   const getPackageDescription = (pkg: PurchasesPackageType | null): string => {
     if (!pkg) return 'Full access to all features';
     return pkg.product.description || 'Full access to all features';
+  };
+
+  const scrollContentStyle = {
+    ...styles.scrollContent,
+    padding: getResponsiveHorizontalPadding(spacing.lg),
+    paddingTop: spacing['3xl'],
+    paddingBottom: 100,
   };
 
   return (
@@ -238,7 +285,10 @@ const Paywall: React.FC<PaywallProps> = ({
 
         <ScrollView
           style={styles.scrollView}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            scrollContentStyle,
+            getCenteredContainerStyle(MAX_CONTENT_WIDTH_LARGE),
+          ]}
           showsVerticalScrollIndicator={false}
         >
           {/* Header */}
@@ -247,10 +297,7 @@ const Paywall: React.FC<PaywallProps> = ({
               <Ionicons name="rocket" size={32} color={colors.primary} />
             </View>
             <Text style={styles.title}>Unlock Pro</Text>
-            <View style={styles.trialBadgeLarge}>
-              <Ionicons name="gift" size={18} color={colors.primary} />
-              <Text style={styles.trialTextLarge}>7-Day Free Trial</Text>
-            </View>
+            <Text style={styles.trialBadgeMinimal}>7-Day Free Trial</Text>
             <Text style={styles.subtitle}>
               {(() => {
                 const selectedPkg = getSelectedPackage();
@@ -302,7 +349,7 @@ const Paywall: React.FC<PaywallProps> = ({
                       <View style={styles.planHeader}>
                         <View style={styles.planInfo}>
                           <Text style={styles.planName}>
-                            {isMonthly ? 'Monthly Access' : 'Yearly Access'}
+                            {getProductTitle(pkg)}
                           </Text>
                           <Text style={styles.planDescription}>
                             {getPackageDescription(pkg)}
@@ -322,6 +369,11 @@ const Paywall: React.FC<PaywallProps> = ({
                             {isMonthly ? '/mo' : '/yr'}
                           </Text>
                         </View>
+                        {isYearly && getMonthlyEquivalent(pkg) && (
+                          <Text style={styles.monthlyEquivalent}>
+                            {getMonthlyEquivalent(pkg)}
+                          </Text>
+                        )}
                       </View>
                     </Pressable>
                   </Animated.View>
@@ -368,6 +420,16 @@ const Paywall: React.FC<PaywallProps> = ({
               <Text style={styles.trustText}>Guarantee</Text>
             </View>
           </Animated.View>
+
+          {/* Optional Account Creation Message - Only show for guest users */}
+          {!isAuthenticated && (
+            <Animated.View entering={FadeIn.duration(400).delay(700)} style={styles.accountMessageContainer}>
+              <Ionicons name="information-circle-outline" size={16} color={colors.textMuted} />
+              <Text style={styles.accountMessageText}>
+                Create an account to sync and restore purchases across devices.
+              </Text>
+            </Animated.View>
+          )}
         </ScrollView>
 
         {/* Continue Button */}
@@ -397,6 +459,48 @@ const Paywall: React.FC<PaywallProps> = ({
           <Text style={styles.footerNote}>
             Start your 7-day free trial • Cancel anytime • Subscription auto-renews after trial
           </Text>
+          
+          {/* Privacy Policy and Terms of Use Links - Required by App Store Guideline 3.1.2 */}
+          <View style={styles.legalLinksContainer}>
+            <Pressable
+              style={styles.legalLink}
+              onPress={async () => {
+                try {
+                  const url = 'https://flashbits.co/privacy';
+                  const canOpen = await Linking.canOpenURL(url);
+                  if (canOpen) {
+                    await Linking.openURL(url);
+                  } else {
+                    Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/privacy');
+                  }
+                } catch (error) {
+                  Alert.alert('Error', 'Unable to open the link. Please visit https://flashbits.co/privacy');
+                }
+              }}
+            >
+              <Text style={styles.legalLinkText}>Privacy Policy</Text>
+            </Pressable>
+            <Text style={styles.legalLinkSeparator}>•</Text>
+            <Pressable
+              style={styles.legalLink}
+              onPress={async () => {
+                try {
+                  // Apple's standard EULA - required for apps using Apple's standard Terms of Use
+                  const url = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
+                  const canOpen = await Linking.canOpenURL(url);
+                  if (canOpen) {
+                    await Linking.openURL(url);
+                  } else {
+                    Alert.alert('Error', 'Unable to open the link. Please visit https://www.apple.com/legal/internet-services/itunes/dev/stdeula/');
+                  }
+                } catch (error) {
+                  Alert.alert('Error', 'Unable to open the link. Please visit https://www.apple.com/legal/internet-services/itunes/dev/stdeula/');
+                }
+              }}
+            >
+              <Text style={styles.legalLinkText}>Terms of Use (EULA)</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     </Modal>
@@ -491,29 +595,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: colors.primary,
   },
-  trialBadgeLarge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 255, 148, 0.15)',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
-    gap: spacing.sm,
-    borderWidth: 2,
-    borderColor: colors.primary,
-    marginTop: spacing.sm,
-    marginBottom: spacing.xs,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  trialTextLarge: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: '700',
-    color: colors.primary,
-    letterSpacing: 0.5,
+  trialBadgeMinimal: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '500',
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+    marginBottom: spacing.md,
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   pricingSection: {
     marginBottom: spacing.xl,
@@ -594,6 +684,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginLeft: spacing.xs,
   },
+  monthlyEquivalent: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '400',
+    color: colors.textMuted,
+    marginTop: spacing.xs,
+  },
   featuresSection: {
     marginBottom: spacing.xl,
   },
@@ -656,6 +752,25 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: colors.textMuted,
   },
+  accountMessageContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.cardSubtle,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.borderSubtle,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  accountMessageText: {
+    flex: 1,
+    fontSize: typography.fontSize.xs,
+    fontWeight: '400',
+    color: colors.textSecondary,
+    lineHeight: typography.fontSize.xs * 1.4,
+  },
   footer: {
     position: 'absolute',
     bottom: 0,
@@ -689,6 +804,33 @@ const styles = StyleSheet.create({
     fontWeight: '400',
     color: colors.textMuted,
     textAlign: 'center',
+    marginBottom: spacing.sm,
+  },
+  legalLinksSection: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSubtle,
+  },
+  legalLinksContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  legalLink: {
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.xs,
+  },
+  legalLinkText: {
+    fontSize: typography.fontSize.xs,
+    fontWeight: '500',
+    color: colors.primary,
+    textDecorationLine: 'underline',
+  },
+  legalLinkSeparator: {
+    fontSize: typography.fontSize.xs,
+    color: colors.textMuted,
   },
   continueButtonDisabled: {
     opacity: 0.6,

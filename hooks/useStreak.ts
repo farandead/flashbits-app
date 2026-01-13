@@ -12,8 +12,10 @@ import { useAuth } from '@/context/AuthContext';
 import { updateMaxStreak } from '@/services/statsService';
 import { debugError } from '@/utils/debug';
 
-const STREAK_STORAGE_KEY = '@flashbits_streak_data';
-const BEST_STREAK_KEY = '@flashbits_best_streak';
+const getStreakStorageKey = (userId: string | null) => 
+  userId ? `@flashbits_streak_data_${userId}` : '@flashbits_streak_data';
+const getBestStreakKey = (userId: string | null) => 
+  userId ? `@flashbits_best_streak_${userId}` : '@flashbits_best_streak';
 
 interface StreakData {
   currentStreak: number;
@@ -83,16 +85,41 @@ export function useStreak(): UseStreakReturn {
   const [brokenStreakCount, setBrokenStreakCount] = useState(0);
   
   const lastMilestoneRef = useRef(0);
+  const previousUserIdRef = useRef<string | null>(null);
 
-  // Load streak data on mount
+  // Load streak data on mount and when user changes
   useEffect(() => {
-    loadStreakData();
-  }, []);
+    const currentUserId = user?.uid || null;
+    const previousUserId = previousUserIdRef.current;
+    
+    // Only reset if user actually changed (not on initial mount with same user)
+    if (previousUserId !== null && previousUserId !== currentUserId) {
+      // User changed - reset streak state
+      setStreak(0);
+      setConsecutiveCorrect(0);
+      setIsActive(false);
+      setBestStreak(0);
+      setShowCelebration(false);
+      setShowMilestone(false);
+      setWasJustBroken(false);
+      lastMilestoneRef.current = 0;
+    }
+    
+    // Load streak data for current user
+    if (currentUserId) {
+      loadStreakData();
+    }
+    
+    // Update previous user ID
+    previousUserIdRef.current = currentUserId;
+  }, [user?.uid]);
 
   // Save streak data whenever it changes
   useEffect(() => {
-    saveStreakData();
-  }, [streak, consecutiveCorrect, isActive, bestStreak]);
+    if (user?.uid) {
+      saveStreakData();
+    }
+  }, [streak, consecutiveCorrect, isActive, bestStreak, user?.uid]);
 
   // Sync best streak to Firestore when it changes (will queue if offline)
   useEffect(() => {
@@ -104,9 +131,12 @@ export function useStreak(): UseStreakReturn {
   }, [bestStreak, user?.uid]);
 
   const loadStreakData = async () => {
+    if (!user?.uid) return;
+    
     try {
-      // Load from AsyncStorage first
-      const data = await AsyncStorage.getItem(STREAK_STORAGE_KEY);
+      // Load from AsyncStorage first (user-specific key)
+      const storageKey = getStreakStorageKey(user.uid);
+      const data = await AsyncStorage.getItem(storageKey);
       if (data) {
         const parsed: StreakData = JSON.parse(data);
         
@@ -136,8 +166,9 @@ export function useStreak(): UseStreakReturn {
         }
       }
 
-      // Load best streak separately (persists forever)
-      const best = await AsyncStorage.getItem(BEST_STREAK_KEY);
+      // Load best streak separately (persists forever, user-specific)
+      const bestStreakKey = getBestStreakKey(user.uid);
+      const best = await AsyncStorage.getItem(bestStreakKey);
       if (best) {
         const bestValue = parseInt(best, 10);
         if (!isNaN(bestValue)) {
@@ -163,6 +194,8 @@ export function useStreak(): UseStreakReturn {
   };
 
   const saveStreakData = async () => {
+    if (!user?.uid) return;
+    
     try {
       const data: StreakData = {
         currentStreak: streak,
@@ -171,11 +204,13 @@ export function useStreak(): UseStreakReturn {
         bestStreak,
         lastUpdated: Date.now(),
       };
-      await AsyncStorage.setItem(STREAK_STORAGE_KEY, JSON.stringify(data));
+      const storageKey = getStreakStorageKey(user.uid);
+      await AsyncStorage.setItem(storageKey, JSON.stringify(data));
       
-      // Save best streak separately
+      // Save best streak separately (user-specific)
       if (bestStreak > 0) {
-        await AsyncStorage.setItem(BEST_STREAK_KEY, bestStreak.toString());
+        const bestStreakKey = getBestStreakKey(user.uid);
+        await AsyncStorage.setItem(bestStreakKey, bestStreak.toString());
       }
     } catch (error) {
       debugError('storage', 'Error saving streak data:', error);
